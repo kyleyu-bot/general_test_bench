@@ -49,6 +49,38 @@ PARAMS = {
 }
 
 
+def _post_process(script_file: str, drive: str, torque_sensor: str) -> None:
+    """Find this test's log folder and run Kt analysis. Called in a daemon thread."""
+    import time as _time, sys as _sys, os as _os
+    from pathlib import Path
+
+    _time.sleep(3)  # wait for bridge log rotation to close the CSV
+
+    stem      = Path(script_file).stem
+    repo_root = Path(script_file).resolve().parents[2]
+    log_root  = repo_root / "test_data_log"
+    now       = _time.time()
+    candidates = [
+        p for p in log_root.glob(f"*/*_{stem}")
+        if p.is_dir() and now - p.stat().st_mtime < 600
+    ]
+    if not candidates:
+        return
+    log_folder = max(candidates, key=lambda p: p.stat().st_mtime)
+
+    kt_dir = _os.path.join(_os.path.dirname(script_file),
+                           "../tools/post_processing/kt_plot")
+    if kt_dir not in _sys.path:
+        _sys.path.insert(0, kt_dir)
+    import importlib
+    import dyno_kt_analysis as _mod
+    importlib.reload(_mod)
+    try:
+        _mod.run_kt_analysis(str(log_folder), drive=drive, torque_sensor=torque_sensor)
+    except Exception:
+        pass  # silent — test already finished, don't surface errors to user
+
+
 def run(params: dict, commander, stop_event):
     start_nm      = float(params["start_torque_nm"])
     end_nm        = float(params["end_torque_nm"])
@@ -127,3 +159,11 @@ def run(params: dict, commander, stop_event):
         main_mode   = 0,
         dut_mode    = 0,
     )
+
+    if not stop_event.is_set():
+        import threading
+        threading.Thread(
+            target=_post_process,
+            args=(__file__, params["drive"], params["torque_sensor"]),
+            daemon=True,
+        ).start()
