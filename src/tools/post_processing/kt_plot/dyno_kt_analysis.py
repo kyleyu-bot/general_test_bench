@@ -327,8 +327,13 @@ def run_kt_analysis(
 
     out_dir = _resolve_output_dir(log_folder)
 
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    canvas   = FigureCanvasAgg(fig)
+    canvas.draw()
+    renderer = canvas.get_renderer()
     for ax, stem in axes_info:
-        fig.savefig(str(out_dir / f"kt_{stem}.png"), dpi=150, bbox_inches="tight")
+        bbox = ax.get_tightbbox(renderer).transformed(fig.dpi_scale_trans.inverted())
+        fig.savefig(str(out_dir / f"kt_{stem}.png"), dpi=150, bbox_inches=bbox)
 
     # Build results dict and write kt_values.txt
     kt_results: dict = {}
