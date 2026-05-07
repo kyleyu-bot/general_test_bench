@@ -2264,6 +2264,83 @@ class DynoWindow(QMainWindow):
             ["python3", os.path.join(repo,
              "src/tools/post_processing/kt_plot/dyno_kt_gui.py")]))
 
+        # ── Google Drive sync ─────────────────────────────────────────────────
+        _upload_proc = [None]   # mutable box: subprocess.Popen or None
+
+        _sync_label = QLabel("Not synced")
+        _sync_label.setStyleSheet("color: grey; font-size: 10px;")
+
+        _poll_timer = QTimer()
+
+        def _poll_upload():
+            proc = _upload_proc[0]
+            if proc is None or proc.poll() is not None:
+                _poll_timer.stop()
+                if proc is not None:
+                    from datetime import datetime
+                    ts = datetime.now().strftime("%H:%M")
+                    if proc.returncode == 0:
+                        _sync_label.setText(f"Synced {ts}")
+                        _sync_label.setStyleSheet("color: grey; font-size: 10px;")
+                    else:
+                        _sync_label.setText(f"Sync failed {ts}")
+                        _sync_label.setStyleSheet("color: red; font-size: 10px;")
+
+        _poll_timer.timeout.connect(_poll_upload)
+
+        def _sync_to_drive():
+            if _upload_proc[0] is not None and _upload_proc[0].poll() is None:
+                return   # already running
+            src = os.path.join(repo, "actuator_test_log")
+            if not os.path.isdir(src):
+                _sync_label.setText("No actuator_test_log")
+                _sync_label.setStyleSheet("color: red; font-size: 10px;")
+                return
+            sudo_user = (os.environ.get("SUDO_USER")
+                         or os.environ.get("DYNO_ORIGINAL_USER"))
+            # rclone copy: upload new/changed files only, never delete destination
+            cmd = ["rclone", "copy", src, "foundation_gdrive_hw_actuator:actuator_test_log",
+                   "--transfers=4", "--checkers=8"]
+            if sudo_user:
+                cmd = ["sudo", "-u", sudo_user, "-H"] + cmd
+            try:
+                _upload_proc[0] = subprocess.Popen(
+                    cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    start_new_session=True)
+                _sync_label.setText("Syncing…")
+                _sync_label.setStyleSheet("color: orange; font-size: 10px;")
+                _poll_timer.start(2000)
+            except OSError:
+                _sync_label.setText("rclone not found")
+                _sync_label.setStyleSheet("color: red; font-size: 10px;")
+
+        _auto_check = QCheckBox("Auto")
+        _auto_check.setToolTip("Automatically sync to Google Drive on a timer")
+
+        _auto_spin = QSpinBox()
+        _auto_spin.setRange(1, 24)
+        _auto_spin.setValue(2)
+        _auto_spin.setSuffix(" h")
+        _auto_spin.setFixedWidth(58)
+        _auto_spin.setToolTip("Auto-sync interval in hours")
+
+        _auto_timer = QTimer()
+        _auto_timer.timeout.connect(_sync_to_drive)
+
+        def _update_auto_timer(checked):
+            if checked:
+                _sync_to_drive()   # immediate sync on enable
+                _auto_timer.start(_auto_spin.value() * 3_600_000)
+            else:
+                _auto_timer.stop()
+
+        _auto_check.toggled.connect(_update_auto_timer)
+        _auto_spin.valueChanged.connect(
+            lambda v: _auto_timer.start(v * 3_600_000) if _auto_check.isChecked() else None)
+
+        btn_sync = QPushButton("Sync to Drive")
+        btn_sync.clicked.connect(_sync_to_drive)
+
         # Horizontal row inside the right panel so buttons sit directly below
         # _script_panel with their left edge aligned to its left edge.
         # The left spacer matches btn_w (200 px) + right_lay spacing (6 px).
@@ -2274,8 +2351,11 @@ class DynoWindow(QMainWindow):
         pp_spacer = QWidget()
         pp_spacer.setFixedWidth(206)
         pp_row_lay.addWidget(pp_spacer)
-        for btn in (btn_plot, btn_log, btn_bode, btn_kt):
+        for btn in (btn_plot, btn_log, btn_bode, btn_kt, btn_sync):
             pp_row_lay.addWidget(btn)
+        pp_row_lay.addWidget(_sync_label)
+        pp_row_lay.addWidget(_auto_check)
+        pp_row_lay.addWidget(_auto_spin)
         pp_row_lay.addStretch(1)
         right_outer.insertWidget(1, pp_row)  # between right_inner and stretch
 
