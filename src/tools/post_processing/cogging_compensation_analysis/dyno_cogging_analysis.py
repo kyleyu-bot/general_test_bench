@@ -197,7 +197,7 @@ def make_cogging_figure(
     # Row 2 right — averaged FFT
     _h_avg = harmonics_avg if harmonics_avg is not None else harmonics
     ax_fa_main = fig.add_subplot(n_rows, n_cols, 6)
-    ax_fa_main.plot(_h_avg, fft_avg, linewidth=0.8, color="tab:green")
+    ax_fa_main.bar(_h_avg, fft_avg, width=1.0, color="tab:green")
     ax_fa_main.set_xlabel("Harmonic (cycles/rev)")
     ax_fa_main.set_ylabel("|FFT| (A)")
     ax_fa_main.set_title("FFT — Averaged")
@@ -210,7 +210,7 @@ def make_cogging_figure(
 
     # ── Row 3: FFT harmonics ──────────────────────────────────────────────────
     ax_f1 = fig.add_subplot(n_rows, n_cols, 7)
-    ax_f1.plot(harmonics, fft_seg1, linewidth=0.8)
+    ax_f1.bar(harmonics, fft_seg1, width=1.0)
     ax_f1.set_xlabel("Harmonic (cycles/rev)")
     ax_f1.set_ylabel("|FFT| (A)")
     ax_f1.set_title("FFT — Forward")
@@ -222,7 +222,7 @@ def make_cogging_figure(
     axes_info.append((ax_f1, "fft_seg1"))
 
     ax_f2 = fig.add_subplot(n_rows, n_cols, 8)
-    ax_f2.plot(harmonics, fft_seg2, linewidth=0.8, color="tab:orange")
+    ax_f2.bar(harmonics, fft_seg2, width=1.0, color="tab:orange")
     ax_f2.set_xlabel("Harmonic (cycles/rev)")
     ax_f2.set_ylabel("|FFT| (A)")
     ax_f2.set_title("FFT — Reverse")
