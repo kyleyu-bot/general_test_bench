@@ -23,7 +23,7 @@ from dyno_cogging_analysis import (
     _DRIVE_COLS,
     _find_csv, _latest_log, _load_csv,
     _detect_segments, _resample_to_enc_space, _compute_fft,
-    make_cogging_figure, make_cogging_avg_fft_figure,
+    make_cogging_figure,
 )
 
 
@@ -138,20 +138,15 @@ class DynoCoggingApp(tk.Tk):
         doma = int(np.argmax(fft_avg[1:])  + 1)
 
         self._csv_path = csv_path
-        self._avg_axes: list[tuple] = []
 
         fig, axes_info = make_cogging_figure(
             common_enc, iq1, iq2, iq_avg,
             fft_seg1, fft_seg2, fft_avg,
             harmonics1, t_s, iq_full, vel_full, drive,
+            harmonics_avg=harmonics_avg,
         )
-        fig_avg, axes_avg = make_cogging_avg_fft_figure(
-            common_enc, iq_avg, fft_avg, harmonics_avg,
-        )
-        self._fig_avg  = fig_avg
-        self._avg_axes = axes_avg
         self._embed(fig)
-        self._axes_info = axes_info + axes_avg
+        self._axes_info = axes_info
 
         self.status_var.set(
             f"Forward dominant harmonic: {dom1}  |  "
@@ -193,13 +188,9 @@ class DynoCoggingApp(tk.Tk):
         if not save_dir:
             return
         try:
-            for fig, axes_info in [
-                (self._fig,     [a for a in self._axes_info if a not in self._avg_axes]),
-                (self._fig_avg, self._avg_axes),
-            ]:
-                for ax, stem in axes_info:
-                    path = os.path.join(save_dir, f"cogging_{stem}.png")
-                    fig.savefig(path, dpi=150, bbox_inches="tight")
+            for ax, stem in self._axes_info:
+                path = os.path.join(save_dir, f"cogging_{stem}.png")
+                self._fig.savefig(path, dpi=150, bbox_inches="tight")
             self.status_var.set(
                 f"Saved {len(self._axes_info)} plots to {save_dir}")
         except Exception as exc:

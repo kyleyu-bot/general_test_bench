@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
+from matplotlib.ticker import MultipleLocator
 
 _VEL_THRESHOLD_FRAC = 0.05   # fraction of peak |vel_cmd| to detect active segments
 
@@ -135,6 +136,7 @@ def make_cogging_figure(
     full_iq: np.ndarray,
     full_vel: np.ndarray,
     drive: str,
+    harmonics_avg: np.ndarray | None = None,
 ) -> tuple[Figure, list]:
     """
     Build and return (fig, axes_info).
@@ -192,9 +194,19 @@ def make_cogging_figure(
     ax_avg.grid(True, alpha=0.3)
     axes_info.append((ax_avg, "avg_iq_vs_enc"))
 
-    # Row 2 right — empty placeholder keeps layout even
-    ax_empty = fig.add_subplot(n_rows, n_cols, 6)
-    ax_empty.set_visible(False)
+    # Row 2 right — averaged FFT
+    _h_avg = harmonics_avg if harmonics_avg is not None else harmonics
+    ax_fa_main = fig.add_subplot(n_rows, n_cols, 6)
+    ax_fa_main.plot(_h_avg, fft_avg, linewidth=0.8, color="tab:green")
+    ax_fa_main.set_xlabel("Harmonic (cycles/rev)")
+    ax_fa_main.set_ylabel("|FFT| (A)")
+    ax_fa_main.set_title("FFT — Averaged")
+    ax_fa_main.set_xlim(0, 200)
+    ax_fa_main.xaxis.set_major_locator(MultipleLocator(10))
+    ax_fa_main.xaxis.set_minor_locator(MultipleLocator(5))
+    ax_fa_main.grid(True, which="major", alpha=0.3)
+    ax_fa_main.grid(True, which="minor", alpha=0.12)
+    axes_info.append((ax_fa_main, "fft_avg"))
 
     # ── Row 3: FFT harmonics ──────────────────────────────────────────────────
     ax_f1 = fig.add_subplot(n_rows, n_cols, 7)
@@ -202,7 +214,11 @@ def make_cogging_figure(
     ax_f1.set_xlabel("Harmonic (cycles/rev)")
     ax_f1.set_ylabel("|FFT| (A)")
     ax_f1.set_title("FFT — Forward")
-    ax_f1.grid(True, alpha=0.3)
+    ax_f1.set_xlim(0, 200)
+    ax_f1.xaxis.set_major_locator(MultipleLocator(10))
+    ax_f1.xaxis.set_minor_locator(MultipleLocator(5))
+    ax_f1.grid(True, which="major", alpha=0.3)
+    ax_f1.grid(True, which="minor", alpha=0.12)
     axes_info.append((ax_f1, "fft_seg1"))
 
     ax_f2 = fig.add_subplot(n_rows, n_cols, 8)
@@ -210,7 +226,11 @@ def make_cogging_figure(
     ax_f2.set_xlabel("Harmonic (cycles/rev)")
     ax_f2.set_ylabel("|FFT| (A)")
     ax_f2.set_title("FFT — Reverse")
-    ax_f2.grid(True, alpha=0.3)
+    ax_f2.set_xlim(0, 200)
+    ax_f2.xaxis.set_major_locator(MultipleLocator(10))
+    ax_f2.xaxis.set_minor_locator(MultipleLocator(5))
+    ax_f2.grid(True, which="major", alpha=0.3)
+    ax_f2.grid(True, which="minor", alpha=0.12)
     axes_info.append((ax_f2, "fft_seg2"))
 
     return fig, axes_info
@@ -239,7 +259,11 @@ def make_cogging_avg_fft_figure(
     ax_fa.set_xlabel("Harmonic (cycles/rev)")
     ax_fa.set_ylabel("|FFT| (A)")
     ax_fa.set_title("FFT — Averaged")
-    ax_fa.grid(True, alpha=0.3)
+    ax_fa.set_xlim(0, 200)
+    ax_fa.xaxis.set_major_locator(MultipleLocator(10))
+    ax_fa.xaxis.set_minor_locator(MultipleLocator(5))
+    ax_fa.grid(True, which="major", alpha=0.3)
+    ax_fa.grid(True, which="minor", alpha=0.12)
     axes_info.append((ax_fa, "fft_avg"))
 
     return fig, axes_info
@@ -302,15 +326,13 @@ def run_cogging_analysis(
         common_enc, iq1, iq2, iq_avg,
         fft_seg1, fft_seg2, fft_avg,
         harmonics1, t_s, iq_full, vel_full, drive,
-    )
-    fig_avg, axes_avg = make_cogging_avg_fft_figure(
-        common_enc, iq_avg, fft_avg, harmonics_avg,
+        harmonics_avg=harmonics_avg,
     )
 
     out_dir = _resolve_output_dir(log_folder)
 
     from matplotlib.backends.backend_agg import FigureCanvasAgg
-    for fig, axes_info in [(fig_main, axes_main), (fig_avg, axes_avg)]:
+    for fig, axes_info in [(fig_main, axes_main)]:
         canvas   = FigureCanvasAgg(fig)
         canvas.draw()
         renderer = canvas.get_renderer()
