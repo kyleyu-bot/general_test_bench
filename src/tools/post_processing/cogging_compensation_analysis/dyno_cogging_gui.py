@@ -188,9 +188,12 @@ class DynoCoggingApp(tk.Tk):
         if not save_dir:
             return
         try:
+            renderer = self._canvas.get_renderer()
             for ax, stem in self._axes_info:
+                bbox = ax.get_tightbbox(renderer).transformed(
+                    self._fig.dpi_scale_trans.inverted())
                 path = os.path.join(save_dir, f"cogging_{stem}.png")
-                self._fig.savefig(path, dpi=150, bbox_inches="tight")
+                self._fig.savefig(path, dpi=150, bbox_inches=bbox)
             self.status_var.set(
                 f"Saved {len(self._axes_info)} plots to {save_dir}")
         except Exception as exc:
