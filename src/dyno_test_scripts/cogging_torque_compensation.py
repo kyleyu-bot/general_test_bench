@@ -2,14 +2,13 @@
 Cogging torque compensation test.
 
 Runs the selected drive at a constant input-side speed in the positive
-direction and monitors the input-side encoder (raw counts, 0x204A) to stop
-once the shaft has completed the target number of input-side revolutions.
+direction for a calculated duration, then reverses for the same duration.
 
 Speed conversion:
     velocity_rad_s = input_speed_rev_s × 2π
 
-Completion condition:
-    abs(current_input_enc - start_input_enc) >= target_input_revs × input_enc_cpr
+Duration per leg:
+    leg_duration_s = target_input_revs / input_speed_rev_s
 
 Parameters
 ----------
@@ -18,11 +17,7 @@ drive : str
 input_speed_rev_s : float
     Constant input-side speed (rev/s). Default 0.5.
 target_input_revs : float
-    Number of input-side revolutions before stopping. Default 4.0.
-input_enc_cpr : int
-    Input encoder counts per revolution (check drive datasheet). Default 65536.
-timeout_s : float
-    Safety timeout (s) — exits early if target is not reached. Default 120.
+    Number of input-side revolutions per direction. Default 4.0.
 
 Framework contract (pre/post):
     Before run() — framework enables both drives and applies GUI modes.
@@ -34,14 +29,44 @@ import math
 import time
 
 PARAMS = {
-    "drive":              ["main", "dut"],
-    "input_speed_rev_s":  0.5,
-    "target_input_revs":  4.0,
-    "input_enc_cpr":      65536,
-    "timeout_s":          120.0,
+    "drive":             ["main", "dut"],
+    "input_speed_rev_s": 0.5,
+    "target_input_revs": 4.0,
 }
 
 CSV = 9   # DS402 Cyclic Synchronous Velocity
+
+
+def _post_process(script_file: str, drive: str) -> None:
+    """Find this test's log folder and run cogging analysis. Called in a daemon thread."""
+    import time as _time, sys as _sys, os as _os
+    from pathlib import Path
+
+    _time.sleep(3)  # wait for bridge log rotation to close the CSV
+
+    stem      = Path(script_file).stem
+    repo_root = Path(script_file).resolve().parents[2]
+    log_root  = repo_root / "test_data_log"
+    now       = _time.time()
+    candidates = [
+        p for p in log_root.glob(f"*/*_{stem}")
+        if p.is_dir() and now - p.stat().st_mtime < 600
+    ]
+    if not candidates:
+        return
+    log_folder = max(candidates, key=lambda p: p.stat().st_mtime)
+
+    analysis_dir = _os.path.join(_os.path.dirname(script_file),
+                                 "../tools/post_processing/cogging_compensation_analysis")
+    if analysis_dir not in _sys.path:
+        _sys.path.insert(0, analysis_dir)
+    import importlib
+    import dyno_cogging_analysis as _mod
+    importlib.reload(_mod)
+    try:
+        _mod.run_cogging_analysis(str(log_folder), drive=drive)
+    except Exception:
+        pass  # silent — test already finished, don't surface errors to user
 
 
 def run(params: dict, commander, stop_event):
@@ -49,12 +74,10 @@ def run(params: dict, commander, stop_event):
     is_main     = (drive == "main")
     speed_rev_s = float(params["input_speed_rev_s"])
     target_revs = float(params["target_input_revs"])
-    enc_cpr     = int(params["input_enc_cpr"])
-    timeout_s   = float(params["timeout_s"])
     vel_key     = "main_velocity" if is_main else "dut_velocity"
 
-    vel_rad_s      = speed_rev_s * 2.0 * math.pi
-    target_counts  = target_revs * enc_cpr
+    vel_rad_s  = speed_rev_s * 2.0 * math.pi
+    duration_s = target_revs / speed_rev_s
 
     def _send(vel: float):
         commander.set_command(
@@ -65,19 +88,18 @@ def run(params: dict, commander, stop_event):
             dut_mode    = CSV if not is_main else 0,
         )
 
-    # Capture starting input encoder position.
-    start_enc = commander.get_input_enc_pos_raw(drive)
+    def _run_leg(vel: float):
+        _send(vel)
+        t0 = time.monotonic()
+        while not stop_event.is_set():
+            if time.monotonic() - t0 >= duration_s:
+                break
+            time.sleep(0.02)
 
-    _send(vel_rad_s)
+    _run_leg(vel_rad_s)     # forward
 
-    t0 = time.monotonic()
-    while not stop_event.is_set():
-        if time.monotonic() - t0 >= timeout_s:
-            break
-        delta = abs(commander.get_input_enc_pos_raw(drive) - start_enc)
-        if delta >= target_counts:
-            break
-        time.sleep(0.02)
+    if not stop_event.is_set():
+        _run_leg(-vel_rad_s)    # reverse
 
     # Zero and disable — framework epilogue also does this.
     commander.set_command(
@@ -87,3 +109,11 @@ def run(params: dict, commander, stop_event):
         main_mode   = 0,
         dut_mode    = 0,
     )
+
+    if not stop_event.is_set():
+        import threading
+        threading.Thread(
+            target=_post_process,
+            args=(__file__, params["drive"]),
+            daemon=True,
+        ).start()

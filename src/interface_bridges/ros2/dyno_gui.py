@@ -465,7 +465,8 @@ class DynoCommander(Node):
 
         # SDO request/response
         self._sdo_pub = self.create_publisher(StringMsg, "/dyno/sdo_request", 10)
-        self._pending_sdo_response = None   # written by ROS thread, read by Qt timer
+        self._pending_sdo_response = None        # written by ROS thread, read by Qt timer
+        self._sdo_one_shot_callbacks: list = []  # list of (index, subindex, callback)
         self.create_subscription(StringMsg, "/dyno/sdo_response",
             self._on_sdo_response, 10)
 
@@ -695,12 +696,32 @@ class DynoCommander(Node):
             return
         with self._limits_lock:
             self._pending_sdo_response = data
+            try:
+                resp_index = int(data.get("index", "0"), 16)
+            except (ValueError, TypeError):
+                resp_index = -1
+            resp_sub = int(data.get("subindex", -1))
+            matched   = []
+            remaining = []
+            for idx, sub, cb in self._sdo_one_shot_callbacks:
+                if idx == resp_index and sub == resp_sub:
+                    matched.append(cb)
+                else:
+                    remaining.append((idx, sub, cb))
+            self._sdo_one_shot_callbacks = remaining
+        for cb in matched:
+            cb(data)
 
     def pop_sdo_response(self):
         with self._limits_lock:
             data = self._pending_sdo_response
             self._pending_sdo_response = None
             return data
+
+    def register_sdo_one_shot(self, index: int, subindex: int, callback) -> None:
+        """Register a callback invoked when an SDO response for (index, subindex) arrives."""
+        with self._limits_lock:
+            self._sdo_one_shot_callbacks.append((index, subindex, callback))
 
     def _publish(self):
         with self._lock:
@@ -1209,6 +1230,18 @@ class ScriptingPanel(QGroupBox):
         self._current_mod      = None
         self._on_script_active = on_script_active  # callable(bool) | None
         self._get_modes        = get_modes          # callable() → (main_mode, dut_mode) | None
+        self._sdo_auto_pending: list = []   # [(param_name, val)] written by ROS thread
+        self._sdo_auto_read_ok: set = set() # params successfully populated
+
+        # Drain _sdo_auto_pending in the Qt main thread
+        self._sdo_drain_timer = QTimer(self)
+        self._sdo_drain_timer.timeout.connect(self._drain_sdo_auto_pending)
+        self._sdo_drain_timer.start(50)
+
+        # Retry SDO auto-reads every 3 s until all params are populated
+        self._sdo_retry_timer = QTimer(self)
+        self._sdo_retry_timer.timeout.connect(self._retry_sdo_auto_reads)
+        self._sdo_retry_timer.start(3000)
 
         # ── Script selector ───────────────────────────────────────────────────
         self._script_combo = QComboBox()
@@ -1324,6 +1357,7 @@ class ScriptingPanel(QGroupBox):
     def _on_script_selected(self, idx: int):
         path = self._script_combo.itemData(idx)
         self._current_mod = None
+        self._sdo_auto_read_ok.clear()
         self._clear_params()
         if not path:
             return
@@ -1332,8 +1366,69 @@ class ScriptingPanel(QGroupBox):
             self._current_mod = mod
             params = getattr(mod, "PARAMS", {})
             self._build_params(params)
+            self._trigger_sdo_auto_reads()
+            # Re-trigger SDO reads when the drive dropdown changes
+            auto_reads = getattr(mod, "SDO_AUTO_READS", {})
+            for spec in auto_reads.values():
+                drive_param = spec.get("drive_param")
+                if drive_param and drive_param in self._param_widgets:
+                    w = self._param_widgets[drive_param]
+                    if isinstance(w, QComboBox):
+                        w.currentTextChanged.connect(
+                            lambda _t, m=mod: self._trigger_sdo_auto_reads(m))
         except Exception as e:
             self._log_line(f"[load error] {e}")
+
+    def _trigger_sdo_auto_reads(self, mod=None):
+        if mod is None:
+            mod = self._current_mod
+        if mod is None:
+            return
+        auto_reads = getattr(mod, "SDO_AUTO_READS", {})
+        for param_name, spec in auto_reads.items():
+            if param_name not in self._param_widgets:
+                continue
+            drive = "main"
+            drive_param = spec.get("drive_param")
+            if drive_param and drive_param in self._param_widgets:
+                w = self._param_widgets[drive_param]
+                if isinstance(w, QComboBox):
+                    drive = w.currentText()
+
+            def _on_response(resp, pname=param_name, s=spec, m=mod):
+                if self._current_mod is not m:
+                    return
+                if not (resp.get("op") == "read" and resp.get("success", False)):
+                    return
+                raw = int(resp.get("value", 0))
+                transform = s.get("transform")
+                val = int(transform(raw)) if transform else raw
+                self._sdo_auto_pending.append((pname, val))  # GIL-safe append
+
+            self._commander.register_sdo_one_shot(
+                spec["index"], spec["subindex"], _on_response)
+            self._commander.request_sdo(
+                drive, "read", spec["index"], spec["subindex"], spec["size"])
+
+    def _drain_sdo_auto_pending(self):
+        while self._sdo_auto_pending:
+            pname, val = self._sdo_auto_pending.pop(0)
+            w = self._param_widgets.get(pname)
+            if w and isinstance(w, QSpinBox):
+                w.setValue(val)
+                self._sdo_auto_read_ok.add(pname)
+
+    def _retry_sdo_auto_reads(self):
+        mod = self._current_mod
+        if mod is None:
+            return
+        auto_reads = getattr(mod, "SDO_AUTO_READS", {})
+        if not auto_reads:
+            return
+        # Only retry params that haven't been successfully populated yet
+        pending = [p for p in auto_reads if p not in self._sdo_auto_read_ok]
+        if pending:
+            self._trigger_sdo_auto_reads(mod)
 
     # ── Parameter form ────────────────────────────────────────────────────────
 
@@ -2264,6 +2359,11 @@ class DynoWindow(QMainWindow):
             ["python3", os.path.join(repo,
              "src/tools/post_processing/kt_plot/dyno_kt_gui.py")]))
 
+        btn_cogging = QPushButton("Cogging")
+        btn_cogging.clicked.connect(lambda: _launch_as_user(
+            ["python3", os.path.join(repo,
+             "src/tools/post_processing/cogging_compensation_analysis/dyno_cogging_gui.py")]))
+
         # ── Google Drive sync ─────────────────────────────────────────────────
         _upload_proc = [None]   # mutable box: subprocess.Popen or None
 
@@ -2351,7 +2451,7 @@ class DynoWindow(QMainWindow):
         pp_spacer = QWidget()
         pp_spacer.setFixedWidth(206)
         pp_row_lay.addWidget(pp_spacer)
-        for btn in (btn_plot, btn_log, btn_bode, btn_kt, btn_sync):
+        for btn in (btn_plot, btn_log, btn_bode, btn_kt, btn_cogging, btn_sync):
             pp_row_lay.addWidget(btn)
         pp_row_lay.addWidget(_sync_label)
         pp_row_lay.addWidget(_auto_check)
