@@ -24,7 +24,8 @@ from dyno_kt_analysis import (
     _find_csv, _latest_log, _load_csv,
     _validate_kt_data, _is_2way_test,
     _detect_ramp_segment, _detect_2way_segments,
-    _linear_fit, make_kt_figure,
+    _detect_torque_inversion,
+    _linear_fit, make_kt_figure, save_kt_subplots,
 )
 
 
@@ -130,7 +131,8 @@ class DynoKtApp(tk.Tk):
             messagebox.showerror("Segment detection failed", str(exc))
             return
 
-        invert = self.invert_var.get()
+        invert = _detect_torque_inversion(data, header, drive, sensor_col)
+        self.invert_var.set(invert)
 
         def _fits(iq, torque):
             if invert:
@@ -166,6 +168,7 @@ class DynoKtApp(tk.Tk):
         self.status_var.set(
             f"Seg 1 — Kt_output = {fit1_out[0]:.4f} Nm/A  |  "
             f"Kt_motor = {fit1_mot[0]:.4f} Nm/A  (gear ratio: {gear_ratio:.4f})"
+            + ("  |  torque inverted" if invert else "")
             + (f"  |  Seg 2 Kt = {fit2_out[0]:.4f}  |  Seg 3 Kt = {fit3_out[0]:.4f}"
                if two_way else "")
         )
@@ -198,17 +201,14 @@ class DynoKtApp(tk.Tk):
     def _save(self):
         if self._fig is None or not self._axes_info:
             return
-        from pathlib import Path as _Path
         default_dir = str(self._csv_path.parent) if self._csv_path else "."
         save_dir = filedialog.askdirectory(
             title="Select folder to save plots", initialdir=default_dir)
         if not save_dir:
             return
         try:
-            for ax, stem in self._axes_info:
-                path = os.path.join(save_dir, f"kt_{stem}.png")
-                self._fig.savefig(path, dpi=150, bbox_inches="tight")
-            self.status_var.set(f"Saved {len(self._axes_info)} plots to {save_dir}")
+            saved_paths = save_kt_subplots(self._fig, self._axes_info, save_dir)
+            self.status_var.set(f"Saved {len(saved_paths)} plots to {save_dir}")
         except Exception as exc:
             messagebox.showerror("Save failed", str(exc))
 

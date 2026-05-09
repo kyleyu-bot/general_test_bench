@@ -70,7 +70,8 @@ def _resolve_output_dir(log_folder: Path) -> Path:
     sn = _read_serial_number(log_folder)
     if sn:
         repo_root = Path(__file__).resolve().parents[4]
-        out = repo_root / "actuator_test_log" / sn / log_folder.name
+        hhmmss = log_folder.name.split("_")[0]
+        out = repo_root / "actuator_test_log" / sn / f"{hhmmss}_cogging_test"
     else:
         out = log_folder
     out.mkdir(parents=True, exist_ok=True)

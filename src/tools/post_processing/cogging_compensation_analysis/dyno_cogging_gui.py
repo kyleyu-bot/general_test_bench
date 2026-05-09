@@ -187,17 +187,28 @@ class DynoCoggingApp(tk.Tk):
             title="Select folder to save plots", initialdir=default_dir)
         if not save_dir:
             return
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        save_dpi   = 150
+        orig_canvas = self._fig.canvas
+        orig_dpi    = self._fig.dpi
         try:
-            renderer = self._canvas.get_renderer()
+            agg = FigureCanvasAgg(self._fig)
+            self._fig.set_dpi(save_dpi)
+            agg.draw()
+            renderer = agg.get_renderer()
             for ax, stem in self._axes_info:
                 bbox = ax.get_tightbbox(renderer).transformed(
                     self._fig.dpi_scale_trans.inverted())
                 path = os.path.join(save_dir, f"cogging_{stem}.png")
-                self._fig.savefig(path, dpi=150, bbox_inches=bbox)
+                self._fig.savefig(path, dpi=save_dpi, bbox_inches=bbox)
             self.status_var.set(
                 f"Saved {len(self._axes_info)} plots to {save_dir}")
         except Exception as exc:
             messagebox.showerror("Save failed", str(exc))
+        finally:
+            self._fig.set_canvas(orig_canvas)
+            self._fig.set_dpi(orig_dpi)
+            self._canvas.draw()
 
 
 if __name__ == "__main__":
