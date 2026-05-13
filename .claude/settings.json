@@ -7,7 +7,13 @@
       "Bash(cmake -B /home/dyno-nuc2/gitRepos/dyno_testbench_cpp/build -S /home/dyno-nuc2/gitRepos/dyno_testbench_cpp -DCMAKE_BUILD_TYPE=Debug)",
       "Bash(cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug -Wno-dev)",
       "Bash(cmake --build build --parallel 4)",
-      "Bash(find /home/dyno-nuc2/gitRepos/dyno_testbench_cpp/build -name *.a -o -name *.so -o -name *.exe)"
+      "Bash(find /home/dyno-nuc2/gitRepos/dyno_testbench_cpp/build -name *.a -o -name *.so -o -name *.exe)",
+      "Bash(cmake --build .)",
+      "Bash(sudo -E build/dyno_ros2_bridge/bridge_ros2 --ros-args -p topology:=config/ethercat_device_config/topology.dyno2.template6.json -p fault_reset_s:=2.0 -p pub_hz:=200.0)",
+      "Bash(cmake --build build -- ethercat_core)",
+      "Bash(cmake --build build/dyno_ros2_bridge)",
+      "Bash(sudo fuser /dev/null)",
+      "Bash(grep -E \"\\\\.\\(sh|py|bash\\)$\")"
     ]
   }
 }

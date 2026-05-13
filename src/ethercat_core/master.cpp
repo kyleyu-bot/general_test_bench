@@ -88,12 +88,21 @@ static float readSdoFloat(int soem_idx, const SdoReadSpec& spec) {
     int ret = ec_SDOread(
         static_cast<uint16>(soem_idx),
         spec.index, spec.subindex,
-        FALSE, &sz, buf, EC_TIMEOUTRET
+        FALSE, &sz, buf, EC_TIMEOUTRXM
     );
     if (ret <= 0) {
+        // Drain the SOEM error list to find any SDO abort code.
         std::ostringstream oss;
         oss << "SDO read failed for '" << spec.name << "' at 0x"
             << std::hex << spec.index << ":" << static_cast<int>(spec.subindex);
+        ec_errort err;
+        while (ec_poperror(&err)) {
+            if (err.Etype == EC_ERR_TYPE_SDO_ERROR) {
+                oss << " abort=0x" << std::hex << static_cast<uint32_t>(err.AbortCode);
+            } else if (err.Etype == EC_ERR_TYPE_MBX_ERROR) {
+                oss << " mbx_error";
+            }
+        }
         throw MasterConfigError(oss.str());
     }
 
@@ -359,6 +368,28 @@ void EthercatMaster::readStartupParams(
     const auto specs = adapter.startupReadSpecs();
     if (specs.empty()) return;
 
+    // Refresh slave states so we can report the actual state on failure.
+    ec_readstate();
+
+    // Wait for this specific slave to reach PRE_OP (it may need extra time after
+    // ec_config_init puts the bus in PRE_OP, especially for drives behind couplers).
+    const int slave_state = ec_statecheck(soem_idx, EC_STATE_PRE_OP,
+                                          EC_TIMEOUTSTATE);
+    std::fprintf(stderr, "[master] '%s' pre-SDO state=0x%02X al_status=0x%04X mbx_l=%d\n",
+        cfg.name.c_str(),
+        static_cast<int>(ec_slave[soem_idx].state),
+        static_cast<int>(ec_slave[soem_idx].ALstatuscode),
+        static_cast<int>(ec_slave[soem_idx].mbx_l));
+
+    if ((slave_state & 0x0F) != EC_STATE_PRE_OP) {
+        std::ostringstream oss;
+        oss << std::hex
+            << "Slave '" << cfg.name << "' not in PRE_OP before startup SDO reads: "
+            << "state=0x" << (ec_slave[soem_idx].state & 0xFF)
+            << " al_status=0x" << static_cast<int>(ec_slave[soem_idx].ALstatuscode);
+        throw MasterConfigError(oss.str());
+    }
+
     auto& params = runtime_.startup_params[cfg.name];
     for (auto& [key, spec] : specs) {
         float val = 0.0f;
@@ -369,14 +400,17 @@ void EthercatMaster::readStartupParams(
                 ok  = true;
             } catch (const MasterConfigError&) {
                 if (attempt < 4) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 }
             }
         }
         if (!ok) {
-            throw MasterConfigError(
-                "Startup SDO read failed for '" + cfg.name + "' key='" + key + "'."
-            );
+            std::ostringstream oss;
+            oss << std::hex
+                << "Startup SDO read failed for '" << cfg.name << "' key='" << key << "'"
+                << " (state=0x" << (ec_slave[soem_idx].state & 0xFF)
+                << " al_status=0x" << static_cast<int>(ec_slave[soem_idx].ALstatuscode) << ").";
+            throw MasterConfigError(oss.str());
         }
         params[key] = val;
     }
