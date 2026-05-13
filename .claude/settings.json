@@ -14,7 +14,8 @@
       "Bash(cmake --build build/dyno_ros2_bridge)",
       "Bash(sudo fuser /dev/null)",
       "Bash(grep -E \"\\\\.\\(sh|py|bash\\)$\")",
-      "Bash(python3 -c \"import ast, sys; ast.parse\\(open\\('src/tools/post_processing/encoder_linearization/dyno_encoder_linearization_analysis.py'\\).read\\(\\)\\); print\\('OK'\\)\")"
+      "Bash(python3 -c \"import ast, sys; ast.parse\\(open\\('src/tools/post_processing/encoder_linearization/dyno_encoder_linearization_analysis.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python3 -c \"import src.tools.post_processing.encoder_linearization.dyno_encoder_linearization_analysis as m; print\\('OK'\\); print\\([x for x in dir\\(m\\) if 'segment' in x.lower\\(\\) or 'output' in x.lower\\(\\)]\\)\")"
     ]
   }
 }

@@ -84,6 +84,8 @@ class EncoderLinearizationResult:
     input_side: EncoderAnalysisSeries
     output_side: EncoderAnalysisSeries
     input_segments: list[tuple[np.ndarray, np.ndarray]] = field(default_factory=list)
+    output_segments: list[tuple[np.ndarray, np.ndarray]] = field(default_factory=list)
+    output_revolution_count: int = 0
 
 
 # -- CSV helpers --------------------------------------------------------------
@@ -374,6 +376,40 @@ def _process_input_segments(
     return segments
 
 
+def _process_output_segments(
+    ext_phase: np.ndarray,
+    out_phase: np.ndarray,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """
+    Return [(ext_seg, out_seg), ...] for each complete EL5032 revolution.
+
+    Segments are bounded by EL5032 wrap events (EL5032 is on the output shaft, 1:1).
+    For each segment: unwrap both signals, flip EL5032 if it opposes the output encoder,
+    then zero-align the output encoder at ext=0.
+    """
+    wrap_idx   = np.where(np.abs(np.diff(ext_phase)) > np.pi)[0] + 1
+    boundaries = np.concatenate(([0], wrap_idx, [len(ext_phase)]))
+
+    segments: list[tuple[np.ndarray, np.ndarray]] = []
+    for start, end in zip(boundaries[1:-1], boundaries[2:-1]):
+        ext_seg = ext_phase[start:end]
+        out_seg = out_phase[start:end]
+        if len(ext_seg) < _MIN_INPUT_SEGMENT_SAMPLES:
+            continue
+
+        ext_unwrapped = np.unwrap(ext_seg)
+        out_unwrapped = np.unwrap(out_seg)
+
+        ext_span = float(ext_unwrapped[-1] - ext_unwrapped[0])
+        out_span = float(out_unwrapped[-1] - out_unwrapped[0])
+        if abs(out_span) > 1e-9 and np.sign(ext_span) != np.sign(out_span):
+            ext_unwrapped = -ext_unwrapped
+
+        out_at_zero = _interp_or_extrap(ext_unwrapped, out_unwrapped, 0.0)
+        segments.append((_wrap_rad(ext_unwrapped), _wrap_rad(out_unwrapped - out_at_zero)))
+    return segments
+
+
 def _processed_input_side_data(
     input_phase_rad: np.ndarray,
     external_phase_rad: np.ndarray,
@@ -479,12 +515,22 @@ def analyze_encoder_linearization(
         input_x_rad,
         lut_size,
     )
+    output_segs = _process_output_segments(
+        _wrap_rad(ext_rad[active]),
+        output_wrapped_rad[active],
+    )
+    if output_segs:
+        out_x = np.concatenate([s[0] for s in output_segs])
+        out_y = np.concatenate([s[1] for s in output_segs])
+    else:
+        out_x, out_y = ext_rad[active], output_wrapped_rad[active]
+
     output_side = _analyze_series(
         "Output side",
-        "EL5032, wrapped (rad)",
-        "Actuator output encoder, wrapped (rad)",
-        ext_rad[active],
-        output_wrapped_rad[active],
+        "External encoder angle (rad)",
+        "Actuator output encoder angle (rad)",
+        out_x,
+        out_y,
         lut_size,
     )
 
@@ -498,6 +544,8 @@ def analyze_encoder_linearization(
         input_side=input_side,
         output_side=output_side,
         input_segments=input_segs,
+        output_segments=output_segs,
+        output_revolution_count=len(output_segs),
     )
 
 
@@ -588,34 +636,59 @@ def _draw_fft_axis(ax, series: EncoderAnalysisSeries) -> None:
     ax.grid(True, which="minor", alpha=0.12)
 
 
-def make_segment_debug_figure(result: EncoderLinearizationResult) -> Figure:
-    """Plot each input-revolution segment individually for debug inspection."""
+def _make_segments_figure(
+    segments: list[tuple[np.ndarray, np.ndarray]],
+    x_label: str,
+    y_label: str,
+    title: str,
+) -> Figure:
     import math
-    segments = result.input_segments
     n = len(segments)
     if n == 0:
         raise ValueError("No segments to plot.")
     ncols = math.ceil(math.sqrt(n))
     nrows = math.ceil(n / ncols)
     fig = Figure(figsize=(4 * ncols, 4 * nrows), tight_layout=True)
-    for i, (inp, ext) in enumerate(segments, start=1):
+    for i, (xs, ys) in enumerate(segments, start=1):
         ax = fig.add_subplot(nrows, ncols, i)
-        x, y = _decimated_xy(inp, ext)
-        ax.scatter(x, y, s=3, alpha=0.35, linewidths=0)
+        xd, yd = _decimated_xy(xs, ys)
+        ax.scatter(xd, yd, s=3, alpha=0.35, linewidths=0)
         ax.plot([0.0, TWO_PI], [0.0, TWO_PI], color="black", linewidth=0.8, alpha=0.55)
         ax.set_title(f"Seg {i}/{n}", fontsize=9)
         ax.set_xlim(0.0, TWO_PI)
         ax.set_ylim(0.0, TWO_PI)
-        ax.set_xlabel("Input enc (rad)", fontsize=7)
-        ax.set_ylabel("Ext enc scaled (rad)", fontsize=7)
+        ax.set_xlabel(x_label, fontsize=7)
+        ax.set_ylabel(y_label, fontsize=7)
         ax.tick_params(labelsize=7)
         ax.grid(True, alpha=0.3)
-    fig.suptitle(
-        f"Input segments debug — {result.drive} "
-        f"(gear {result.gear_ratio:.4g}, {n} complete revs)",
-        fontsize=11,
-    )
+    fig.suptitle(title, fontsize=11)
     return fig
+
+
+def make_segment_debug_figure(result: EncoderLinearizationResult) -> Figure:
+    """Plot each input-revolution segment individually for debug inspection."""
+    return _make_segments_figure(
+        result.input_segments,
+        x_label="Input enc (rad)",
+        y_label="Ext enc scaled (rad)",
+        title=(
+            f"Input segments debug — {result.drive} "
+            f"(gear {result.gear_ratio:.4g}, {result.input_revolution_count} complete revs)"
+        ),
+    )
+
+
+def make_output_segment_debug_figure(result: EncoderLinearizationResult) -> Figure:
+    """Plot each output-revolution segment individually for debug inspection."""
+    return _make_segments_figure(
+        result.output_segments,
+        x_label="External encoder angle (rad)",
+        y_label="Actuator output encoder angle (rad)",
+        title=(
+            f"Output segments debug — {result.drive} "
+            f"({result.output_revolution_count} complete revs)"
+        ),
+    )
 
 
 def make_encoder_linearization_figure(
@@ -680,6 +753,7 @@ def _summary_lines(result: EncoderLinearizationResult) -> list[str]:
         f"gear_ratio = {result.gear_ratio:.9g}",
         f"active_sample_count = {result.sample_count}",
         f"input_revolution_count = {result.input_revolution_count}",
+        f"output_revolution_count = {result.output_revolution_count}",
         f"lut_size = {result.lut_size}",
         f"input_rms_rad = {result.input_side.rms_rad:.9g}",
         f"input_peak_to_peak_rad = {result.input_side.peak_to_peak_rad:.9g}",
@@ -695,12 +769,14 @@ def run_encoder_linearization_analysis(
     drive: str = "main",
     lut_size: int = DEFAULT_LUT_SIZE,
     debug_segments: bool = False,
+    debug_output_segments: bool = False,
 ) -> dict:
     """
     Load CSV, compute input/output encoder LUTs, save plots, LUT CSV, and summary.
 
     When debug_segments=True: save a per-segment scatter figure instead of the
     normal analysis plots; skip LUT CSV and summary.
+    When debug_output_segments=True: same but for output-side segments.
     """
     log_folder = Path(log_folder)
     result = analyze_encoder_linearization(log_folder, drive=drive, lut_size=lut_size)
@@ -715,6 +791,17 @@ def run_encoder_linearization_analysis(
         return {
             "debug_figure_path": str(debug_path),
             "input_revolution_count": result.input_revolution_count,
+        }
+
+    if debug_output_segments:
+        fig = make_output_segment_debug_figure(result)
+        canvas = FigureCanvasAgg(fig)
+        canvas.draw()
+        debug_path = out_dir / "encoder_linearization_output_segments_debug.png"
+        fig.savefig(str(debug_path), dpi=150)
+        return {
+            "debug_figure_path": str(debug_path),
+            "output_revolution_count": result.output_revolution_count,
         }
 
     fig, axes_info = make_encoder_linearization_figure(result)
@@ -744,6 +831,8 @@ def _main() -> None:
     parser.add_argument("--lut-size", type=int, default=DEFAULT_LUT_SIZE)
     parser.add_argument("--debug-segments", action="store_true",
                         help="Plot each input revolution segment individually; skip normal analysis.")
+    parser.add_argument("--debug-output-segments", action="store_true",
+                        help="Plot each output revolution segment individually; skip normal analysis.")
     args = parser.parse_args()
 
     folder = _latest_log(args.path) if args.latest else Path(args.path)
@@ -752,6 +841,7 @@ def _main() -> None:
         drive=args.drive,
         lut_size=args.lut_size,
         debug_segments=args.debug_segments,
+        debug_output_segments=args.debug_output_segments,
     )
     for key, value in result.items():
         print(f"{key}: {value}")
