@@ -702,7 +702,7 @@ def make_encoder_linearization_figure(
 
     for col, (series, stem) in enumerate(zip(series_list, stems), start=1):
         ax_xy = fig.add_subplot(3, 2, col)
-        _draw_xy_axis(ax_xy, series, show_fit=(stem == "input"))
+        _draw_xy_axis(ax_xy, series, show_fit=True)
         axes_info.append((ax_xy, f"{stem}_xy"))
 
         ax_delta = fig.add_subplot(3, 2, 2 + col)
