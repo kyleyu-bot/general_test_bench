@@ -2345,6 +2345,14 @@ class DynoWindow(QMainWindow):
         btn_plot.clicked.connect(lambda: _launch(
             ["bash", os.path.join(repo, "src/interface_bridges/ros2/run_plot.sh")]))
 
+        btn_encoder = QPushButton("Encoder Linearization")
+        btn_encoder.clicked.connect(lambda: _launch_as_user(
+            ["python3", os.path.join(repo,
+             "src/tools/post_processing/encoder_linearization/dyno_encoder_linearization_gui.py")]))
+        plot_btn_w = max(btn_plot.sizeHint().width(), btn_encoder.sizeHint().width())
+        btn_plot.setFixedWidth(plot_btn_w)
+        btn_encoder.setFixedWidth(plot_btn_w)
+
         btn_log = QPushButton("Log Viewer")
         btn_log.clicked.connect(lambda: _launch(
             ["python3", os.path.join(repo, "src/tools/dyno_log_viewer.py")]))
@@ -2441,22 +2449,41 @@ class DynoWindow(QMainWindow):
         btn_sync = QPushButton("Sync to Drive")
         btn_sync.clicked.connect(_sync_to_drive)
 
-        # Horizontal row inside the right panel so buttons sit directly below
-        # _script_panel with their left edge aligned to its left edge.
+        # Two-row post-processing area.  The top row aligns Live Plot with the
+        # other tool buttons; Encoder Linearization sits directly underneath.
         # The left spacer matches btn_w (200 px) + right_lay spacing (6 px).
         pp_row     = QWidget()
-        pp_row_lay = QHBoxLayout(pp_row)
-        pp_row_lay.setContentsMargins(0, 2, 0, 2)
-        pp_row_lay.setSpacing(6)
-        pp_spacer = QWidget()
-        pp_spacer.setFixedWidth(206)
-        pp_row_lay.addWidget(pp_spacer)
-        for btn in (btn_plot, btn_log, btn_bode, btn_kt, btn_cogging, btn_sync):
-            pp_row_lay.addWidget(btn)
-        pp_row_lay.addWidget(_sync_label)
-        pp_row_lay.addWidget(_auto_check)
-        pp_row_lay.addWidget(_auto_spin)
-        pp_row_lay.addStretch(1)
+        pp_row_lay = QVBoxLayout(pp_row)
+        pp_row_lay.setContentsMargins(0, 14, 0, 2)
+        pp_row_lay.setSpacing(4)
+
+        pp_top     = QWidget()
+        pp_top_lay = QHBoxLayout(pp_top)
+        pp_top_lay.setContentsMargins(0, 0, 0, 0)
+        pp_top_lay.setSpacing(6)
+        pp_spacer_top = QWidget()
+        pp_spacer_top.setFixedWidth(206)
+        pp_top_lay.addWidget(pp_spacer_top)
+        pp_top_lay.addWidget(btn_plot)
+        for btn in (btn_log, btn_bode, btn_kt, btn_cogging, btn_sync):
+            pp_top_lay.addWidget(btn)
+        pp_top_lay.addWidget(_sync_label)
+        pp_top_lay.addWidget(_auto_check)
+        pp_top_lay.addWidget(_auto_spin)
+        pp_top_lay.addStretch(1)
+
+        pp_bottom     = QWidget()
+        pp_bottom_lay = QHBoxLayout(pp_bottom)
+        pp_bottom_lay.setContentsMargins(0, 0, 0, 0)
+        pp_bottom_lay.setSpacing(6)
+        pp_spacer_bottom = QWidget()
+        pp_spacer_bottom.setFixedWidth(206)
+        pp_bottom_lay.addWidget(pp_spacer_bottom)
+        pp_bottom_lay.addWidget(btn_encoder)
+        pp_bottom_lay.addStretch(1)
+
+        pp_row_lay.addWidget(pp_top)
+        pp_row_lay.addWidget(pp_bottom)
         right_outer.insertWidget(1, pp_row)  # between right_inner and stretch
 
         # ── Central widget ─────────────────────────────────────────────────────
