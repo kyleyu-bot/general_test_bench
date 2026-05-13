@@ -13,7 +13,8 @@
       "Bash(cmake --build build -- ethercat_core)",
       "Bash(cmake --build build/dyno_ros2_bridge)",
       "Bash(sudo fuser /dev/null)",
-      "Bash(grep -E \"\\\\.\\(sh|py|bash\\)$\")"
+      "Bash(grep -E \"\\\\.\\(sh|py|bash\\)$\")",
+      "Bash(python3 -c \"import ast, sys; ast.parse\\(open\\('src/tools/post_processing/encoder_linearization/dyno_encoder_linearization_analysis.py'\\).read\\(\\)\\); print\\('OK'\\)\")"
     ]
   }
 }

@@ -7,7 +7,7 @@
       "name": "main_drive",
       "position": 6,
       "kind": "volcano",
-      "alias_address": 3001,
+      "alias_address": 3000,
       "vendor_id": 668,
       "scaling": {
         "output_encoder_res_bits": 20,

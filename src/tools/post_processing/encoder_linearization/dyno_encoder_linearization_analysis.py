@@ -331,92 +331,6 @@ def _nonzero_sign(values: np.ndarray) -> np.ndarray:
     return signs
 
 
-def _input_revolution_boundaries(
-    input_phase_rad: np.ndarray,
-    velocity: np.ndarray,
-) -> np.ndarray:
-    wraps = np.where(np.abs(np.diff(input_phase_rad)) > np.pi)[0] + 1
-    vel_sign = _nonzero_sign(velocity)
-    if len(vel_sign) > 1:
-        sign_changes = np.where(vel_sign[1:] * vel_sign[:-1] < 0.0)[0] + 1
-    else:
-        sign_changes = np.array([], dtype=int)
-    return np.unique(np.concatenate(([0], wraps, sign_changes, [len(input_phase_rad)])))
-
-
-def _direction_runs(
-    input_phase_rad: np.ndarray,
-    external_phase_rad: np.ndarray,
-    velocity: np.ndarray,
-) -> list[tuple[np.ndarray, np.ndarray]]:
-    vel_sign = _nonzero_sign(velocity)
-    if len(vel_sign) > 1:
-        splits = np.where(vel_sign[1:] * vel_sign[:-1] < 0.0)[0] + 1
-    else:
-        splits = np.array([], dtype=int)
-
-    boundaries = np.unique(np.concatenate(([0], splits, [len(input_phase_rad)])))
-    runs: list[tuple[np.ndarray, np.ndarray]] = []
-    for start, end in zip(boundaries[:-1], boundaries[1:]):
-        if end - start < _MIN_INPUT_SEGMENT_SAMPLES:
-            continue
-        runs.append((
-            np.unwrap(input_phase_rad[start:end]),
-            np.unwrap(external_phase_rad[start:end]),
-        ))
-    return runs
-
-
-def _complete_rev_bounds(input_unwrapped: np.ndarray) -> list[tuple[float, float]]:
-    span = float(input_unwrapped[-1] - input_unwrapped[0])
-    if abs(span) < _MIN_INPUT_REV_SPAN_RAD:
-        return []
-
-    lo = min(float(input_unwrapped[0]), float(input_unwrapped[-1]))
-    hi = max(float(input_unwrapped[0]), float(input_unwrapped[-1]))
-    first = int(np.ceil((lo - 1e-9) / TWO_PI))
-    last = int(np.floor((hi + 1e-9) / TWO_PI))
-    grid = np.arange(first, last + 1, dtype=float) * TWO_PI
-    if len(grid) < 2:
-        return []
-
-    if span > 0.0:
-        return [(float(a), float(b)) for a, b in zip(grid[:-1], grid[1:])]
-    return [(float(a), float(b)) for a, b in zip(grid[:0:-1], grid[-2::-1])]
-
-
-def _slice_revolution(
-    input_unwrapped: np.ndarray,
-    external_unwrapped: np.ndarray,
-    start_phase: float,
-    end_phase: float,
-) -> tuple[np.ndarray, np.ndarray] | None:
-    lo = min(start_phase, end_phase)
-    hi = max(start_phase, end_phase)
-    inside = (input_unwrapped > lo) & (input_unwrapped < hi)
-    if np.count_nonzero(inside) + 2 < _MIN_INPUT_SEGMENT_SAMPLES:
-        return None
-
-    input_rev = np.concatenate((
-        [start_phase],
-        input_unwrapped[inside],
-        [end_phase],
-    ))
-    ext_rev = np.concatenate((
-        [_interp_or_extrap(input_unwrapped, external_unwrapped, start_phase)],
-        external_unwrapped[inside],
-        [_interp_or_extrap(input_unwrapped, external_unwrapped, end_phase)],
-    ))
-
-    input_span = float(input_rev[-1] - input_rev[0])
-    ext_span = float(ext_rev[-1] - ext_rev[0])
-    if abs(ext_span) > 1e-9 and np.sign(ext_span) != np.sign(input_span):
-        ext_rev = -ext_rev
-
-    ext_zero = _interp_or_extrap(input_rev, ext_rev, start_phase)
-    return _wrap_rad(input_rev), _wrap_rad(ext_rev - ext_zero)
-
-
 def _processed_input_side_data(
     input_phase_rad: np.ndarray,
     external_phase_rad: np.ndarray,
@@ -425,9 +339,10 @@ def _processed_input_side_data(
     """
     Return (input_phase, processed_external_phase, revolution_count).
 
-    The actuator input encoder defines each revolution.  Within each revolution,
-    the EL5032 trace is unwrapped/concatenated, flipped if its direction opposes
-    the input encoder, and offset so the EL5032 value at input phase 0 is 0.
+    Revolution boundaries are the timestamps where the input encoder wraps
+    (|diff| > π).  Within each revolution the EL5032 is np.unwrap-ed to
+    remove its own wrap-around discontinuities, flipped if its net direction
+    opposes the input encoder, then offset so EL5032 = 0 when input = 0.
     """
     finite = (
         np.isfinite(input_phase_rad) &
@@ -435,28 +350,39 @@ def _processed_input_side_data(
         np.isfinite(velocity)
     )
     input_phase = _wrap_rad(input_phase_rad[finite])
-    external_phase = _wrap_rad(external_phase_rad[finite])
-    velocity = velocity[finite]
+    ext_phase   = _wrap_rad(external_phase_rad[finite])
 
     if len(input_phase) < _MIN_INPUT_SEGMENT_SAMPLES:
         raise ValueError("Not enough valid input-side samples.")
 
-    input_parts: list[np.ndarray] = []
+    # Revolution boundaries: indices where the input encoder wraps (0↔2π).
+    wrap_idx   = np.where(np.abs(np.diff(input_phase)) > np.pi)[0] + 1
+    boundaries = np.concatenate(([0], wrap_idx, [len(input_phase)]))
+
+    input_parts:    list[np.ndarray] = []
     external_parts: list[np.ndarray] = []
 
-    for input_unwrapped, ext_unwrapped in _direction_runs(input_phase, external_phase, velocity):
-        for start_phase, end_phase in _complete_rev_bounds(input_unwrapped):
-            sliced = _slice_revolution(
-                input_unwrapped,
-                ext_unwrapped,
-                start_phase,
-                end_phase,
-            )
-            if sliced is None:
-                continue
-            input_rev, external_rev = sliced
-            input_parts.append(input_rev)
-            external_parts.append(external_rev)
+    for start, end in zip(boundaries[:-1], boundaries[1:]):
+        input_seg = input_phase[start:end]
+        ext_seg   = ext_phase[start:end]
+
+        if len(input_seg) < _MIN_INPUT_SEGMENT_SAMPLES:
+            continue
+
+        # Unwrap EL5032 within this revolution to stitch over its wrap-arounds.
+        ext_unwrapped   = np.unwrap(ext_seg)
+        input_unwrapped = np.unwrap(input_seg)
+
+        # Direction: if EL5032 net movement opposes input, flip it.
+        input_span = float(input_unwrapped[-1] - input_unwrapped[0])
+        ext_span   = float(ext_unwrapped[-1]   - ext_unwrapped[0])
+        if abs(ext_span) > 1e-9 and np.sign(ext_span) != np.sign(input_span):
+            ext_unwrapped = -ext_unwrapped
+
+        # Offset so EL5032 = 0 when input encoder = 0.
+        ext_at_zero = _interp_or_extrap(input_unwrapped, ext_unwrapped, 0.0)
+        input_parts.append(_wrap_rad(input_unwrapped))
+        external_parts.append(_wrap_rad(ext_unwrapped - ext_at_zero))
 
     if not input_parts:
         raise ValueError(
