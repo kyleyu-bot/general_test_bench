@@ -6,7 +6,7 @@ No GUI dependencies - safe to import from test scripts or headless pipelines.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import argparse
 import re
@@ -83,6 +83,7 @@ class EncoderLinearizationResult:
     input_revolution_count: int
     input_side: EncoderAnalysisSeries
     output_side: EncoderAnalysisSeries
+    input_segments: list[tuple[np.ndarray, np.ndarray]] = field(default_factory=list)
 
 
 # -- CSV helpers --------------------------------------------------------------
@@ -331,19 +332,55 @@ def _nonzero_sign(values: np.ndarray) -> np.ndarray:
     return signs
 
 
+def _process_input_segments(
+    input_phase: np.ndarray,
+    ext_phase: np.ndarray,
+    gear_ratio: float = 1.0,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """
+    Return [(input_seg, ext_processed), ...] for each complete revolution.
+
+    Revolution boundaries are indices where the input encoder wraps (|diff| > π).
+    Only segments between consecutive wrap events are included (complete revolutions).
+
+    For each segment:
+      1. np.unwrap both signals to remove wrap-arounds within the segment.
+      2. Flip ext if its net direction opposes input.
+      3. Subtract the ext value interpolated at input=0 so ext=0 when input=0.
+      4. Multiply by gear_ratio so the ext span covers [0, 2π] per input revolution.
+    """
+    wrap_idx   = np.where(np.abs(np.diff(input_phase)) > np.pi)[0] + 1
+    boundaries = np.concatenate(([0], wrap_idx, [len(input_phase)]))
+
+    segments: list[tuple[np.ndarray, np.ndarray]] = []
+    for start, end in zip(boundaries[1:-1], boundaries[2:-1]):
+        input_seg = input_phase[start:end]
+        ext_seg   = ext_phase[start:end]
+        if len(input_seg) < _MIN_INPUT_SEGMENT_SAMPLES:
+            continue
+
+        ext_unwrapped   = np.unwrap(ext_seg)
+        input_unwrapped = np.unwrap(input_seg)
+
+        input_span = float(input_unwrapped[-1] - input_unwrapped[0])
+        ext_span   = float(ext_unwrapped[-1]   - ext_unwrapped[0])
+        if abs(ext_span) > 1e-9 and np.sign(ext_span) != np.sign(input_span):
+            ext_unwrapped = -ext_unwrapped
+
+        ext_at_zero = _interp_or_extrap(input_unwrapped, ext_unwrapped, 0.0)
+        ext_scaled  = (ext_unwrapped - ext_at_zero) * gear_ratio
+
+        segments.append((_wrap_rad(input_unwrapped), _wrap_rad(ext_scaled)))
+    return segments
+
+
 def _processed_input_side_data(
     input_phase_rad: np.ndarray,
     external_phase_rad: np.ndarray,
     velocity: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, int]:
-    """
-    Return (input_phase, processed_external_phase, revolution_count).
-
-    Revolution boundaries are the timestamps where the input encoder wraps
-    (|diff| > π).  Within each revolution the EL5032 is np.unwrap-ed to
-    remove its own wrap-around discontinuities, flipped if its net direction
-    opposes the input encoder, then offset so EL5032 = 0 when input = 0.
-    """
+    gear_ratio: float = 1.0,
+) -> tuple[np.ndarray, np.ndarray, int, list[tuple[np.ndarray, np.ndarray]]]:
+    """Return (input_concat, ext_concat, revolution_count, per_segment_list)."""
     finite = (
         np.isfinite(input_phase_rad) &
         np.isfinite(external_phase_rad) &
@@ -355,46 +392,17 @@ def _processed_input_side_data(
     if len(input_phase) < _MIN_INPUT_SEGMENT_SAMPLES:
         raise ValueError("Not enough valid input-side samples.")
 
-    # Revolution boundaries: indices where the input encoder wraps (0↔2π).
-    wrap_idx   = np.where(np.abs(np.diff(input_phase)) > np.pi)[0] + 1
-    boundaries = np.concatenate(([0], wrap_idx, [len(input_phase)]))
+    segments = _process_input_segments(input_phase, ext_phase, gear_ratio)
 
-    input_parts:    list[np.ndarray] = []
-    external_parts: list[np.ndarray] = []
-
-    for start, end in zip(boundaries[:-1], boundaries[1:]):
-        input_seg = input_phase[start:end]
-        ext_seg   = ext_phase[start:end]
-
-        if len(input_seg) < _MIN_INPUT_SEGMENT_SAMPLES:
-            continue
-
-        # Unwrap EL5032 within this revolution to stitch over its wrap-arounds.
-        ext_unwrapped   = np.unwrap(ext_seg)
-        input_unwrapped = np.unwrap(input_seg)
-
-        # Direction: if EL5032 net movement opposes input, flip it.
-        input_span = float(input_unwrapped[-1] - input_unwrapped[0])
-        ext_span   = float(ext_unwrapped[-1]   - ext_unwrapped[0])
-        if abs(ext_span) > 1e-9 and np.sign(ext_span) != np.sign(input_span):
-            ext_unwrapped = -ext_unwrapped
-
-        # Offset so EL5032 = 0 when input encoder = 0.
-        ext_at_zero = _interp_or_extrap(input_unwrapped, ext_unwrapped, 0.0)
-        input_parts.append(_wrap_rad(input_unwrapped))
-        external_parts.append(_wrap_rad(ext_unwrapped - ext_at_zero))
-
-    if not input_parts:
+    if not segments:
         raise ValueError(
             "No complete input-side revolutions were found. "
             "Check that the log contains active motion across encoder wraps."
         )
 
-    return (
-        np.concatenate(input_parts),
-        np.concatenate(external_parts),
-        len(input_parts),
-    )
+    input_concat = np.concatenate([s[0] for s in segments])
+    ext_concat   = np.concatenate([s[1] for s in segments])
+    return input_concat, ext_concat, len(segments), segments
 
 
 def _analyze_series(
@@ -456,18 +464,19 @@ def analyze_encoder_linearization(
     output_wrapped_rad = _wrap_rad(output_accum_rad)
     velocity = data[:, header.index(cols["velocity"])]
 
-    input_x_rad, input_y_rad, input_rev_count = _processed_input_side_data(
+    input_x_rad, input_y_rad, input_rev_count, input_segs = _processed_input_side_data(
         input_rad[active],
         ext_rad[active],
         velocity[active],
+        gear_ratio=gear,
     )
 
     input_side = _analyze_series(
         "Input side",
-        "Actuator input encoder phase (rad)",
-        "Processed EL5032 phase per input rev (rad)",
-        input_x_rad,
+        "Processed EL5032 angle per input rev (rad)",
+        "Actuator input encoder angle (rad)",
         input_y_rad,
+        input_x_rad,
         lut_size,
     )
     output_side = _analyze_series(
@@ -488,6 +497,7 @@ def analyze_encoder_linearization(
         input_revolution_count=input_rev_count,
         input_side=input_side,
         output_side=output_side,
+        input_segments=input_segs,
     )
 
 
@@ -523,13 +533,25 @@ def _decimated_xy(x: np.ndarray, y: np.ndarray, max_points: int = 25000) -> tupl
     return x[::step], y[::step]
 
 
-def _draw_xy_axis(ax, series: EncoderAnalysisSeries) -> None:
+def _draw_xy_axis(ax, series: EncoderAnalysisSeries, show_fit: bool = False) -> None:
     x, y = _decimated_xy(series.x_rad, series.y_rad)
     ax.scatter(x, y, s=3, alpha=0.25, linewidths=0)
-    ax.plot([0.0, TWO_PI], [0.0, TWO_PI], color="black", linewidth=0.8, alpha=0.55)
+    ax.plot([0.0, TWO_PI], [0.0, TWO_PI], color="black", linewidth=0.8, alpha=0.55, label="ideal")
+    if show_fit:
+        fx = series.x_rad[np.isfinite(series.x_rad) & np.isfinite(series.y_rad)]
+        fy = series.y_rad[np.isfinite(series.x_rad) & np.isfinite(series.y_rad)]
+        slope, intercept = np.polyfit(fx, fy, 1)
+        fy_hat = slope * fx + intercept
+        ss_res = float(np.sum((fy - fy_hat) ** 2))
+        ss_tot = float(np.sum((fy - float(np.mean(fy))) ** 2))
+        r2 = 1.0 - ss_res / ss_tot if ss_tot > 0.0 else 1.0
+        fit_x = np.array([0.0, TWO_PI])
+        ax.plot(fit_x, slope * fit_x + intercept, color="tab:red", linewidth=1.2,
+                label=f"fit  y={slope:.4f}x{intercept:+.4f}  R²={r2:.6f}")
+        ax.legend(fontsize=8)
     ax.set_xlabel(series.x_label)
     ax.set_ylabel(series.y_label)
-    ax.set_title(f"{series.label}: encoder phase XY")
+    ax.set_title(f"{series.label}: encoder angle XY")
     ax.set_xlim(0.0, TWO_PI)
     ax.set_ylim(0.0, TWO_PI)
     ax.grid(True, alpha=0.3)
@@ -541,7 +563,7 @@ def _draw_delta_axis(ax, series: EncoderAnalysisSeries) -> None:
     ax.plot(series.lut_phase_rad, series.lut_delta_rad, color="tab:red",
             linewidth=1.1, label=f"LUT ({len(series.lut_phase_rad)})")
     ax.set_xlabel(series.x_label)
-    ax.set_ylabel("X - Y error (rad)")
+    ax.set_ylabel("error (rad)")
     ax.set_title(
         f"{series.label}: delta vs reference "
         f"(rms {series.rms_rad:.6f} rad, p-p {series.peak_to_peak_rad:.6f} rad)"
@@ -566,6 +588,36 @@ def _draw_fft_axis(ax, series: EncoderAnalysisSeries) -> None:
     ax.grid(True, which="minor", alpha=0.12)
 
 
+def make_segment_debug_figure(result: EncoderLinearizationResult) -> Figure:
+    """Plot each input-revolution segment individually for debug inspection."""
+    import math
+    segments = result.input_segments
+    n = len(segments)
+    if n == 0:
+        raise ValueError("No segments to plot.")
+    ncols = math.ceil(math.sqrt(n))
+    nrows = math.ceil(n / ncols)
+    fig = Figure(figsize=(4 * ncols, 4 * nrows), tight_layout=True)
+    for i, (inp, ext) in enumerate(segments, start=1):
+        ax = fig.add_subplot(nrows, ncols, i)
+        x, y = _decimated_xy(inp, ext)
+        ax.scatter(x, y, s=3, alpha=0.35, linewidths=0)
+        ax.plot([0.0, TWO_PI], [0.0, TWO_PI], color="black", linewidth=0.8, alpha=0.55)
+        ax.set_title(f"Seg {i}/{n}", fontsize=9)
+        ax.set_xlim(0.0, TWO_PI)
+        ax.set_ylim(0.0, TWO_PI)
+        ax.set_xlabel("Input enc (rad)", fontsize=7)
+        ax.set_ylabel("Ext enc scaled (rad)", fontsize=7)
+        ax.tick_params(labelsize=7)
+        ax.grid(True, alpha=0.3)
+    fig.suptitle(
+        f"Input segments debug — {result.drive} "
+        f"(gear {result.gear_ratio:.4g}, {n} complete revs)",
+        fontsize=11,
+    )
+    return fig
+
+
 def make_encoder_linearization_figure(
     result: EncoderLinearizationResult,
 ) -> tuple[Figure, list]:
@@ -577,7 +629,7 @@ def make_encoder_linearization_figure(
 
     for col, (series, stem) in enumerate(zip(series_list, stems), start=1):
         ax_xy = fig.add_subplot(3, 2, col)
-        _draw_xy_axis(ax_xy, series)
+        _draw_xy_axis(ax_xy, series, show_fit=(stem == "input"))
         axes_info.append((ax_xy, f"{stem}_xy"))
 
         ax_delta = fig.add_subplot(3, 2, 2 + col)
@@ -642,14 +694,30 @@ def run_encoder_linearization_analysis(
     log_folder: str | Path,
     drive: str = "main",
     lut_size: int = DEFAULT_LUT_SIZE,
+    debug_segments: bool = False,
 ) -> dict:
     """
     Load CSV, compute input/output encoder LUTs, save plots, LUT CSV, and summary.
+
+    When debug_segments=True: save a per-segment scatter figure instead of the
+    normal analysis plots; skip LUT CSV and summary.
     """
     log_folder = Path(log_folder)
     result = analyze_encoder_linearization(log_folder, drive=drive, lut_size=lut_size)
-    fig, axes_info = make_encoder_linearization_figure(result)
     out_dir = _resolve_output_dir(log_folder)
+
+    if debug_segments:
+        fig = make_segment_debug_figure(result)
+        canvas = FigureCanvasAgg(fig)
+        canvas.draw()
+        debug_path = out_dir / "encoder_linearization_segments_debug.png"
+        fig.savefig(str(debug_path), dpi=150)
+        return {
+            "debug_figure_path": str(debug_path),
+            "input_revolution_count": result.input_revolution_count,
+        }
+
+    fig, axes_info = make_encoder_linearization_figure(result)
     save_encoder_subplots(fig, axes_info, out_dir)
     lut_path = save_lut_csv(result, out_dir)
     summary_path = out_dir / "encoder_linearization_values.txt"
@@ -674,6 +742,8 @@ def _main() -> None:
                         help="Use the latest dyno_pdo.csv(.gz) under path.")
     parser.add_argument("--drive", choices=["auto", *sorted(_DRIVE_COLS)], default="auto")
     parser.add_argument("--lut-size", type=int, default=DEFAULT_LUT_SIZE)
+    parser.add_argument("--debug-segments", action="store_true",
+                        help="Plot each input revolution segment individually; skip normal analysis.")
     args = parser.parse_args()
 
     folder = _latest_log(args.path) if args.latest else Path(args.path)
@@ -681,6 +751,7 @@ def _main() -> None:
         folder,
         drive=args.drive,
         lut_size=args.lut_size,
+        debug_segments=args.debug_segments,
     )
     for key, value in result.items():
         print(f"{key}: {value}")
