@@ -366,6 +366,8 @@ def _process_input_segments(
 
         input_span = float(input_unwrapped[-1] - input_unwrapped[0])
         ext_span   = float(ext_unwrapped[-1]   - ext_unwrapped[0])
+        if abs(input_span) < _MIN_INPUT_REV_SPAN_RAD:
+            continue
         if abs(ext_span) > 1e-9 and np.sign(ext_span) != np.sign(input_span):
             ext_unwrapped = -ext_unwrapped
 
@@ -402,6 +404,8 @@ def _process_output_segments(
 
         ext_span = float(ext_unwrapped[-1] - ext_unwrapped[0])
         out_span = float(out_unwrapped[-1] - out_unwrapped[0])
+        if abs(ext_span) < _MIN_INPUT_REV_SPAN_RAD:
+            continue
         if abs(out_span) > 1e-9 and np.sign(ext_span) != np.sign(out_span):
             ext_unwrapped = -ext_unwrapped
 
