@@ -16,6 +16,7 @@ import pandas as pd
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 from matplotlib.ticker import MultipleLocator
+from scipy.signal import butter, filtfilt
 
 TWO_PI = 2.0 * np.pi
 EXTERNAL_ENCODER_BITS = 25
@@ -23,6 +24,9 @@ ACTUATOR_ENCODER_BITS = 20
 DEFAULT_LUT_SIZE = 2048
 LUT_SIZE_CHOICES = (64, 128, 256, 512, 1024, 2048, 4096, 8192)
 _VEL_THRESHOLD_FRAC = 0.05
+BUTTER_ORDER = 4
+BUTTER_CUTOFF_CPR = 500.0       # default low-pass cutoff in cycles per revolution
+RESAMPLE_PTS_PER_REV = 1 << 20  # 2^20 uniform spatial points per revolution
 
 _DRIVE_COLS = {
     "main": {
@@ -74,6 +78,60 @@ class EncoderAnalysisSeries:
 
 
 @dataclass
+class OutputSideAnalysis:
+    """Output-side encoder analysis: continuous-signal pipeline with Butterworth filtering."""
+
+    # Per-sample scatter data (all revolution segments concatenated, per-segment DC-aligned)
+    x_rad: np.ndarray           # ext encoder wrapped to [0, 2π] — x-axis for plots
+    delta_rad: np.ndarray       # filtered delta (used as `delta_rad` in main figure)
+    delta_raw: np.ndarray       # unfiltered delta (same alignment)
+
+    # Statistics
+    delta_raw_min: float
+    delta_raw_max: float
+    delta_filtered_min: float
+    delta_filtered_max: float
+    delta_raw_rss: float        # sqrt(sum(delta^2))
+    delta_filtered_rss: float
+
+    # Spatial average (RESAMPLE_PTS_PER_REV uniform points)
+    average_delta_phase: np.ndarray
+    average_delta: np.ndarray
+
+    # LUT
+    lut_phase_rad: np.ndarray
+    lut_delta_rad: np.ndarray
+    harmonics: np.ndarray
+    fft_mag_rad: np.ndarray
+
+    # Metadata
+    revolution_count: int
+
+    # --- Duck-type interface matching EncoderAnalysisSeries for the main figure ---
+    label: str = "Output side"
+    x_label: str = "External encoder angle (rad)"
+    y_label: str = "Actuator output encoder angle (rad)"
+
+    @property
+    def y_rad(self) -> np.ndarray:
+        return _wrap_rad(self.x_rad - self.delta_rad)
+
+    @property
+    def rms_rad(self) -> float:
+        return float(np.sqrt(np.mean(self.delta_rad ** 2)))
+
+    @property
+    def peak_to_peak_rad(self) -> float:
+        return float(np.max(self.delta_rad) - np.min(self.delta_rad))
+
+    @property
+    def dominant_harmonic(self) -> int:
+        if len(self.fft_mag_rad) <= 1:
+            return 0
+        return int(np.argmax(self.fft_mag_rad[1:]) + 1)
+
+
+@dataclass
 class EncoderLinearizationResult:
     csv_path: Path
     drive: str
@@ -82,7 +140,7 @@ class EncoderLinearizationResult:
     sample_count: int
     input_revolution_count: int
     input_side: EncoderAnalysisSeries
-    output_side: EncoderAnalysisSeries
+    output_side: OutputSideAnalysis
     input_segments: list[tuple[np.ndarray, np.ndarray]] = field(default_factory=list)
     output_segments: list[tuple[np.ndarray, np.ndarray]] = field(default_factory=list)
     output_revolution_count: int = 0
@@ -349,7 +407,9 @@ def _process_input_segments(
       1. np.unwrap both signals to remove wrap-arounds within the segment.
       2. Flip ext if its net direction opposes input.
       3. Subtract the ext value interpolated at input=0 so ext=0 when input=0.
-      4. Multiply by gear_ratio so the ext span covers [0, 2π] per input revolution.
+      4. Scale ext by an empirical gear ratio (input_span / ext_span) so ext covers
+         exactly the same angular span as input, eliminating linear LUT drift from
+         any inaccuracy in the nominal gear_ratio column value.
     """
     wrap_idx   = np.where(np.abs(np.diff(input_phase)) > np.pi)[0] + 1
     boundaries = np.concatenate(([0], wrap_idx, [len(input_phase)]))
@@ -370,9 +430,11 @@ def _process_input_segments(
             continue
         if abs(ext_span) > 1e-9 and np.sign(ext_span) != np.sign(input_span):
             ext_unwrapped = -ext_unwrapped
+            ext_span = -ext_span
 
+        effective_gear = input_span / ext_span if abs(ext_span) > 1e-9 else gear_ratio
         ext_at_zero = _interp_or_extrap(input_unwrapped, ext_unwrapped, 0.0)
-        ext_scaled  = (ext_unwrapped - ext_at_zero) * gear_ratio
+        ext_scaled  = (ext_unwrapped - ext_at_zero) * effective_gear
 
         segments.append((_wrap_rad(input_unwrapped), _wrap_rad(ext_scaled)))
     return segments
@@ -476,10 +538,197 @@ def _analyze_series(
     )
 
 
+def _make_ext_continuous(ext_rad_wrapped: np.ndarray) -> np.ndarray:
+    """Unwrap wrapped [0, 2π) external encoder to a monotonic continuous signal."""
+    return np.unwrap(ext_rad_wrapped)
+
+
+def _butter_filtfilt_spatial(
+    delta: np.ndarray,
+    ext_continuous: np.ndarray,
+    cutoff_cpr: float,
+    order: int,
+) -> np.ndarray:
+    """Zero-phase Butterworth low-pass filter on delta, with cutoff in cycles/revolution."""
+    total_revs = abs(ext_continuous[-1] - ext_continuous[0]) / TWO_PI
+    if total_revs < 0.5:
+        return delta.copy()
+    n_samples_per_rev = len(ext_continuous) / total_revs
+    wn = cutoff_cpr / (n_samples_per_rev / 2.0)
+    wn = float(np.clip(wn, 1e-6, 1.0 - 1e-6))
+    b, a = butter(order, wn, btype="low")
+    padlen = min(3 * max(len(a), len(b)), len(delta) - 1)
+    return filtfilt(b, a, delta, padlen=padlen)
+
+
+def _resection_output(
+    ext_continuous: np.ndarray,
+    delta_raw: np.ndarray,
+    delta_filtered: np.ndarray,
+    n_pts: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[np.ndarray]]:
+    """
+    Split both delta signals into per-revolution segments, align each by mean-DC removal,
+    and spatially bin the filtered delta into n_pts uniform bins in [0, 2π].
+
+    Uses min/max of ext_continuous (not start/end) so bidirectional tests — where the
+    encoder returns to its starting angle — are handled correctly.
+    Spatial binning (not np.interp) handles non-monotonic data within each window.
+
+    Returns (ext_wrapped_all, raw_aligned_all, filt_aligned_all, resampled_filt_segs).
+    """
+    k_min = int(np.floor(np.min(ext_continuous) / TWO_PI))
+    k_max = int(np.floor(np.max(ext_continuous) / TWO_PI))
+
+    uniform_phase = np.linspace(0.0, TWO_PI, n_pts, endpoint=False)
+    ext_wrap_list: list[np.ndarray] = []
+    raw_list:      list[np.ndarray] = []
+    filt_list:     list[np.ndarray] = []
+    resampled:     list[np.ndarray] = []
+
+    for k in range(k_min, k_max):
+        lo = k * TWO_PI
+        hi = (k + 1) * TWO_PI
+        mask = (ext_continuous >= lo) & (ext_continuous < hi)
+        if np.count_nonzero(mask) < _MIN_INPUT_SEGMENT_SAMPLES:
+            continue
+        ext_norm = ext_continuous[mask] - lo   # [0, 2π)
+        raw_seg  = delta_raw[mask]
+        filt_seg = delta_filtered[mask]
+
+        # Per-segment DC alignment: subtract the segment mean
+        raw_aligned  = raw_seg  - float(np.mean(raw_seg))
+        filt_aligned = filt_seg - float(np.mean(filt_seg))
+
+        ext_wrap_list.append(ext_norm)
+        raw_list.append(raw_aligned)
+        filt_list.append(filt_aligned)
+
+        # Spatial binning: circular mean per bin — handles non-monotonic ext_norm
+        # (bidirectional data hits the same angle twice per window)
+        bin_idx = np.floor(ext_norm * n_pts / TWO_PI).astype(int) % n_pts
+        sin_sum = np.zeros(n_pts, dtype=float)
+        cos_sum = np.zeros(n_pts, dtype=float)
+        counts  = np.zeros(n_pts, dtype=int)
+        np.add.at(sin_sum, bin_idx, np.sin(filt_aligned))
+        np.add.at(cos_sum, bin_idx, np.cos(filt_aligned))
+        np.add.at(counts,  bin_idx, 1)
+
+        valid = counts > 0
+        c = np.where(counts > 0, counts, 1)
+        seg_mean = np.where(valid,
+                            np.arctan2(sin_sum / c, cos_sum / c),
+                            0.0)
+        if not np.all(valid):
+            seg_mean = _fill_empty_bins(uniform_phase, seg_mean, valid)
+
+        resampled.append(seg_mean)
+
+    if not ext_wrap_list:
+        raise ValueError("No complete output-side revolutions found in the active data.")
+
+    return (
+        np.concatenate(ext_wrap_list),
+        np.concatenate(raw_list),
+        np.concatenate(filt_list),
+        resampled,
+    )
+
+
+def _circular_average(segs: list[np.ndarray], n_pts: int) -> np.ndarray:
+    """Circular mean of a list of equal-length arrays."""
+    sin_sum = np.zeros(n_pts, dtype=float)
+    cos_sum = np.zeros(n_pts, dtype=float)
+    for seg in segs:
+        sin_sum += np.sin(seg)
+        cos_sum += np.cos(seg)
+    return np.arctan2(sin_sum, cos_sum)
+
+
+def _analyze_output_side(
+    ext_rad_wrapped: np.ndarray,
+    output_accum_rad: np.ndarray,
+    lut_size: int,
+    butter_order: int = BUTTER_ORDER,
+    butter_cutoff_cpr: float = BUTTER_CUTOFF_CPR,
+) -> OutputSideAnalysis:
+    """
+    New output-side pipeline:
+      1. Make ext encoder continuous via unwrap.
+      2. Direction-align with the output actuator encoder.
+      3. Compute raw delta = ext_continuous - output_accum.
+      4. Apply zero-phase Butterworth filter → filtered delta.
+      5. Re-section into per-revolution segments, DC-align each, resample to 2^20 pts.
+      6. Circular average across segments → average_delta.
+      7. Resample average_delta to lut_size → LUT.
+    """
+    ext_continuous = _make_ext_continuous(ext_rad_wrapped)
+    out_continuous = np.unwrap(output_accum_rad)
+
+    # Direction alignment: use peak excursion direction (robust for bidirectional tests
+    # where start ≈ end and span ≈ 0)
+    ext_fwd = float(np.max(ext_continuous) - ext_continuous[0])
+    ext_bwd = float(ext_continuous[0] - np.min(ext_continuous))
+    ext_dir = 1 if ext_fwd >= ext_bwd else -1
+    out_fwd = float(np.max(out_continuous) - out_continuous[0])
+    out_bwd = float(out_continuous[0] - np.min(out_continuous))
+    out_dir = 1 if out_fwd >= out_bwd else -1
+    if ext_dir != out_dir:
+        ext_continuous = -ext_continuous
+
+    delta_raw_cont     = ext_continuous - out_continuous
+    delta_filt_cont    = _butter_filtfilt_spatial(
+        delta_raw_cont, ext_continuous, butter_cutoff_cpr, butter_order
+    )
+
+    ext_wrap_all, raw_aligned, filt_aligned, resampled_segs = _resection_output(
+        ext_continuous, delta_raw_cont, delta_filt_cont, RESAMPLE_PTS_PER_REV
+    )
+
+    # Statistics
+    delta_raw_min  = float(np.min(raw_aligned))
+    delta_raw_max  = float(np.max(raw_aligned))
+    delta_filt_min = float(np.min(filt_aligned))
+    delta_filt_max = float(np.max(filt_aligned))
+    delta_raw_rss  = float(np.sqrt(np.sum(raw_aligned ** 2)))
+    delta_filt_rss = float(np.sqrt(np.sum(filt_aligned ** 2)))
+
+    # Spatial average
+    avg_phase  = np.linspace(0.0, TWO_PI, RESAMPLE_PTS_PER_REV, endpoint=False)
+    avg_delta  = _circular_average(resampled_segs, RESAMPLE_PTS_PER_REV)
+
+    # LUT via uniform decimation of the spatial average
+    lut_phase = np.linspace(0.0, TWO_PI, lut_size, endpoint=False)
+    lut_delta = np.interp(lut_phase, avg_phase, avg_delta, period=TWO_PI)
+
+    harmonics, fft_mag = _compute_fft(lut_delta)
+
+    return OutputSideAnalysis(
+        x_rad=ext_wrap_all,
+        delta_rad=filt_aligned,
+        delta_raw=raw_aligned,
+        delta_raw_min=delta_raw_min,
+        delta_raw_max=delta_raw_max,
+        delta_filtered_min=delta_filt_min,
+        delta_filtered_max=delta_filt_max,
+        delta_raw_rss=delta_raw_rss,
+        delta_filtered_rss=delta_filt_rss,
+        average_delta_phase=avg_phase,
+        average_delta=avg_delta,
+        lut_phase_rad=lut_phase,
+        lut_delta_rad=lut_delta,
+        harmonics=harmonics,
+        fft_mag_rad=fft_mag,
+        revolution_count=len(resampled_segs),
+    )
+
+
 def analyze_encoder_linearization(
     log_folder: str | Path,
     drive: str = "main",
     lut_size: int = DEFAULT_LUT_SIZE,
+    butter_order: int = BUTTER_ORDER,
+    butter_cutoff_cpr: float = BUTTER_CUTOFF_CPR,
 ) -> EncoderLinearizationResult:
     """
     Load a dyno_pdo.csv log and compute input/output encoder linearization LUTs.
@@ -519,23 +768,12 @@ def analyze_encoder_linearization(
         input_x_rad,
         lut_size,
     )
-    output_segs = _process_output_segments(
-        _wrap_rad(ext_rad[active]),
-        output_wrapped_rad[active],
-    )
-    if output_segs:
-        out_x = np.concatenate([s[0] for s in output_segs])
-        out_y = np.concatenate([s[1] for s in output_segs])
-    else:
-        out_x, out_y = ext_rad[active], output_wrapped_rad[active]
-
-    output_side = _analyze_series(
-        "Output side",
-        "External encoder angle (rad)",
-        "Actuator output encoder angle (rad)",
-        out_x,
-        out_y,
-        lut_size,
+    output_side = _analyze_output_side(
+        ext_rad[active],
+        output_accum_rad[active],
+        lut_size=lut_size,
+        butter_order=butter_order,
+        butter_cutoff_cpr=butter_cutoff_cpr,
     )
 
     return EncoderLinearizationResult(
@@ -548,8 +786,8 @@ def analyze_encoder_linearization(
         input_side=input_side,
         output_side=output_side,
         input_segments=input_segs,
-        output_segments=output_segs,
-        output_revolution_count=len(output_segs),
+        output_segments=[],
+        output_revolution_count=output_side.revolution_count,
     )
 
 
@@ -695,6 +933,76 @@ def make_output_segment_debug_figure(result: EncoderLinearizationResult) -> Figu
     )
 
 
+def make_output_analysis_figure(result: EncoderLinearizationResult):
+    """
+    Interactive output-side analysis figure (use with matplotlib.pyplot.show()).
+
+    Single axis showing:
+      - scatter: raw delta vs ext angle (all segments, decimated)
+      - scatter: filtered delta vs ext angle (all segments, decimated)
+      - 4 horizontal dashed lines: min/max of raw and filtered delta
+      - 2 horizontal dotted lines: RSS of raw and filtered delta
+      - line: average_delta (decimated)
+      - line: LUT
+    """
+    import matplotlib.pyplot as plt
+
+    out = result.output_side
+    lut_size = result.lut_size
+
+    fig, ax = plt.subplots(figsize=(14, 7))
+
+    # Decimate scatter to at most 50k pts each
+    x_raw, d_raw   = _decimated_xy(out.x_rad, out.delta_raw, max_points=50_000)
+    x_filt, d_filt = _decimated_xy(out.x_rad, out.delta_rad, max_points=50_000)
+
+    ax.scatter(x_raw,  d_raw,  s=2, alpha=0.15, linewidths=0,
+               color="grey",      label="raw delta")
+    ax.scatter(x_filt, d_filt, s=2, alpha=0.20, linewidths=0,
+               color="steelblue", label="filtered delta")
+
+    # 4 horizontal dashed lines: raw & filtered min/max
+    ax.axhline(out.delta_raw_min,      color="grey",      linestyle="--", linewidth=1.0,
+               label=f"raw min {out.delta_raw_min:.5f}")
+    ax.axhline(out.delta_raw_max,      color="grey",      linestyle="--", linewidth=1.0,
+               label=f"raw max {out.delta_raw_max:.5f}")
+    ax.axhline(out.delta_filtered_min, color="steelblue", linestyle="--", linewidth=1.0,
+               label=f"filt min {out.delta_filtered_min:.5f}")
+    ax.axhline(out.delta_filtered_max, color="steelblue", linestyle="--", linewidth=1.0,
+               label=f"filt max {out.delta_filtered_max:.5f}")
+
+    # 2 horizontal dotted lines: RSS
+    ax.axhline(out.delta_raw_rss,      color="grey",      linestyle=":",  linewidth=1.2,
+               label=f"raw RSS {out.delta_raw_rss:.5f}")
+    ax.axhline(out.delta_filtered_rss, color="steelblue", linestyle=":",  linewidth=1.2,
+               label=f"filt RSS {out.delta_filtered_rss:.5f}")
+
+    # Average delta (decimated from 2^20 to ≤25k pts)
+    avg_x, avg_y = _decimated_xy(out.average_delta_phase, out.average_delta, max_points=25_000)
+    ax.plot(avg_x, avg_y, color="darkorange", linewidth=1.4, label="avg delta")
+
+    # LUT
+    ax.plot(out.lut_phase_rad, out.lut_delta_rad, color="tab:red", linewidth=1.6,
+            label=f"LUT ({lut_size})")
+
+    raw_pp   = out.delta_raw_max   - out.delta_raw_min
+    filt_pp  = out.delta_filtered_max - out.delta_filtered_min
+    ax.set_title(
+        f"Output side — {result.drive}  |  "
+        f"raw p-p {raw_pp:.5f} rad  filtered p-p {filt_pp:.5f} rad  |  "
+        f"raw RSS {out.delta_raw_rss:.5f}  filt RSS {out.delta_filtered_rss:.5f}  |  "
+        f"{result.output_revolution_count} revs"
+    )
+    ax.set_xlabel("External encoder angle (rad)")
+    ax.set_ylabel("Delta (rad)")
+    ax.set_xlim(0.0, TWO_PI)
+    ax.xaxis.set_major_locator(MultipleLocator(np.pi / 2))
+    ax.legend(fontsize=8, loc="upper right")
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    return fig
+
+
 def make_encoder_linearization_figure(
     result: EncoderLinearizationResult,
 ) -> tuple[Figure, list]:
@@ -765,6 +1073,10 @@ def _summary_lines(result: EncoderLinearizationResult) -> list[str]:
         f"output_rms_rad = {result.output_side.rms_rad:.9g}",
         f"output_peak_to_peak_rad = {result.output_side.peak_to_peak_rad:.9g}",
         f"output_dominant_harmonic = {result.output_side.dominant_harmonic}",
+        f"output_raw_peak_to_peak_rad = {result.output_side.delta_raw_max - result.output_side.delta_raw_min:.9g}",
+        f"output_filtered_peak_to_peak_rad = {result.output_side.delta_filtered_max - result.output_side.delta_filtered_min:.9g}",
+        f"output_raw_rss_rad = {result.output_side.delta_raw_rss:.9g}",
+        f"output_filtered_rss_rad = {result.output_side.delta_filtered_rss:.9g}",
     ]
 
 
@@ -774,6 +1086,8 @@ def run_encoder_linearization_analysis(
     lut_size: int = DEFAULT_LUT_SIZE,
     debug_segments: bool = False,
     debug_output_segments: bool = False,
+    butter_order: int = BUTTER_ORDER,
+    butter_cutoff_cpr: float = BUTTER_CUTOFF_CPR,
 ) -> dict:
     """
     Load CSV, compute input/output encoder LUTs, save plots, LUT CSV, and summary.
@@ -783,7 +1097,10 @@ def run_encoder_linearization_analysis(
     When debug_output_segments=True: same but for output-side segments.
     """
     log_folder = Path(log_folder)
-    result = analyze_encoder_linearization(log_folder, drive=drive, lut_size=lut_size)
+    result = analyze_encoder_linearization(
+        log_folder, drive=drive, lut_size=lut_size,
+        butter_order=butter_order, butter_cutoff_cpr=butter_cutoff_cpr,
+    )
     out_dir = _resolve_output_dir(log_folder)
 
     if debug_segments:
@@ -822,6 +1139,10 @@ def run_encoder_linearization_analysis(
         "output_rms_rad": result.output_side.rms_rad,
         "output_peak_to_peak_rad": result.output_side.peak_to_peak_rad,
         "output_dominant_harmonic": result.output_side.dominant_harmonic,
+        "output_raw_peak_to_peak_rad": result.output_side.delta_raw_max - result.output_side.delta_raw_min,
+        "output_filtered_peak_to_peak_rad": result.output_side.delta_filtered_max - result.output_side.delta_filtered_min,
+        "output_raw_rss_rad": result.output_side.delta_raw_rss,
+        "output_filtered_rss_rad": result.output_side.delta_filtered_rss,
     }
 
 
@@ -837,17 +1158,39 @@ def _main() -> None:
                         help="Plot each input revolution segment individually; skip normal analysis.")
     parser.add_argument("--debug-output-segments", action="store_true",
                         help="Plot each output revolution segment individually; skip normal analysis.")
+    parser.add_argument("--show-output-plot", action="store_true",
+                        help="Show interactive output-side analysis plot (no PNG saved).")
+    parser.add_argument("--butter-order", type=int, default=BUTTER_ORDER,
+                        help="Butterworth filter order (default %(default)s).")
+    parser.add_argument("--butter-cutoff-cpr", type=float, default=BUTTER_CUTOFF_CPR,
+                        help="Butterworth low-pass cutoff in cycles/revolution (default %(default)s).")
     args = parser.parse_args()
 
     folder = _latest_log(args.path) if args.latest else Path(args.path)
-    result = run_encoder_linearization_analysis(
+
+    if args.show_output_plot:
+        import matplotlib.pyplot as plt
+        enc_result = analyze_encoder_linearization(
+            folder,
+            drive=args.drive,
+            lut_size=args.lut_size,
+            butter_order=args.butter_order,
+            butter_cutoff_cpr=args.butter_cutoff_cpr,
+        )
+        make_output_analysis_figure(enc_result)
+        plt.show()
+        return
+
+    output = run_encoder_linearization_analysis(
         folder,
         drive=args.drive,
         lut_size=args.lut_size,
         debug_segments=args.debug_segments,
         debug_output_segments=args.debug_output_segments,
+        butter_order=args.butter_order,
+        butter_cutoff_cpr=args.butter_cutoff_cpr,
     )
-    for key, value in result.items():
+    for key, value in output.items():
         print(f"{key}: {value}")
 
 
