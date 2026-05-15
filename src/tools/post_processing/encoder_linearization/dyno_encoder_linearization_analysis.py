@@ -25,7 +25,7 @@ DEFAULT_LUT_SIZE = 2048
 LUT_SIZE_CHOICES = (64, 128, 256, 512, 1024, 2048, 4096, 8192)
 _VEL_THRESHOLD_FRAC = 0.05
 BUTTER_ORDER = 4
-BUTTER_CUTOFF_CPR = 500.0       # default low-pass cutoff in cycles per revolution
+BUTTER_CUTOFF_CPR = 300.0       # default low-pass cutoff in cycles per revolution
 RESAMPLE_PTS_PER_REV = 1 << 20  # 2^20 uniform spatial points per revolution
 
 _DRIVE_COLS = {
@@ -91,8 +91,8 @@ class OutputSideAnalysis:
     delta_raw_max: float
     delta_filtered_min: float
     delta_filtered_max: float
-    delta_raw_rss: float        # sqrt(sum(delta^2))
-    delta_filtered_rss: float
+    delta_raw_rms: float        # sqrt(mean(delta^2))
+    delta_filtered_rms: float
 
     # Spatial average (RESAMPLE_PTS_PER_REV uniform points)
     average_delta_phase: np.ndarray
@@ -550,7 +550,8 @@ def _butter_filtfilt_spatial(
     order: int,
 ) -> np.ndarray:
     """Zero-phase Butterworth low-pass filter on delta, with cutoff in cycles/revolution."""
-    total_revs = abs(ext_continuous[-1] - ext_continuous[0]) / TWO_PI
+    total_path_rad = float(np.sum(np.abs(np.diff(ext_continuous))))
+    total_revs = total_path_rad / TWO_PI
     if total_revs < 0.5:
         return delta.copy()
     n_samples_per_rev = len(ext_continuous) / total_revs
@@ -690,8 +691,8 @@ def _analyze_output_side(
     delta_raw_max  = float(np.max(raw_aligned))
     delta_filt_min = float(np.min(filt_aligned))
     delta_filt_max = float(np.max(filt_aligned))
-    delta_raw_rss  = float(np.sqrt(np.sum(raw_aligned ** 2)))
-    delta_filt_rss = float(np.sqrt(np.sum(filt_aligned ** 2)))
+    delta_raw_rms  = float(np.sqrt(np.mean(raw_aligned ** 2)))
+    delta_filt_rms = float(np.sqrt(np.mean(filt_aligned ** 2)))
 
     # Spatial average
     avg_phase  = np.linspace(0.0, TWO_PI, RESAMPLE_PTS_PER_REV, endpoint=False)
@@ -711,8 +712,8 @@ def _analyze_output_side(
         delta_raw_max=delta_raw_max,
         delta_filtered_min=delta_filt_min,
         delta_filtered_max=delta_filt_max,
-        delta_raw_rss=delta_raw_rss,
-        delta_filtered_rss=delta_filt_rss,
+        delta_raw_rms=delta_raw_rms,
+        delta_filtered_rms=delta_filt_rms,
         average_delta_phase=avg_phase,
         average_delta=avg_delta,
         lut_phase_rad=lut_phase,
@@ -945,59 +946,60 @@ def make_output_analysis_figure(result: EncoderLinearizationResult):
       - line: average_delta (decimated)
       - line: LUT
     """
-    import matplotlib.pyplot as plt
-
     out = result.output_side
     lut_size = result.lut_size
 
-    fig, ax = plt.subplots(figsize=(14, 7))
+    fig = Figure(figsize=(14, 7), tight_layout=True)
+    ax = fig.add_subplot(1, 1, 1)
+
+    S = 1e3  # rad → mrad scale factor
 
     # Decimate scatter to at most 50k pts each
     x_raw, d_raw   = _decimated_xy(out.x_rad, out.delta_raw, max_points=50_000)
     x_filt, d_filt = _decimated_xy(out.x_rad, out.delta_rad, max_points=50_000)
 
-    ax.scatter(x_raw,  d_raw,  s=2, alpha=0.15, linewidths=0,
-               color="grey",      label="raw delta")
-    ax.scatter(x_filt, d_filt, s=2, alpha=0.20, linewidths=0,
+    ax.scatter(x_raw,  d_raw  * S, s=8, alpha=0.4, linewidths=0,
+               color="tomato",    label="raw delta")
+    ax.scatter(x_filt, d_filt * S, s=8, alpha=1.0, linewidths=0,
                color="steelblue", label="filtered delta")
 
     # 4 horizontal dashed lines: raw & filtered min/max
-    ax.axhline(out.delta_raw_min,      color="grey",      linestyle="--", linewidth=1.0,
-               label=f"raw min {out.delta_raw_min:.5f}")
-    ax.axhline(out.delta_raw_max,      color="grey",      linestyle="--", linewidth=1.0,
-               label=f"raw max {out.delta_raw_max:.5f}")
-    ax.axhline(out.delta_filtered_min, color="steelblue", linestyle="--", linewidth=1.0,
-               label=f"filt min {out.delta_filtered_min:.5f}")
-    ax.axhline(out.delta_filtered_max, color="steelblue", linestyle="--", linewidth=1.0,
-               label=f"filt max {out.delta_filtered_max:.5f}")
+    ax.axhline(out.delta_raw_min      * S, color="dimgray",    linestyle="--", linewidth=2.0,
+               label=f"raw min {out.delta_raw_min * S:.3f}")
+    ax.axhline(out.delta_raw_max      * S, color="dimgray",    linestyle="--", linewidth=2.0,
+               label=f"raw max {out.delta_raw_max * S:.3f}")
+    ax.axhline(out.delta_filtered_min * S, color="dodgerblue", linestyle="--", linewidth=2.0,
+               label=f"filt min {out.delta_filtered_min * S:.3f}")
+    ax.axhline(out.delta_filtered_max * S, color="dodgerblue", linestyle="--", linewidth=2.0,
+               label=f"filt max {out.delta_filtered_max * S:.3f}")
 
-    # 2 horizontal dotted lines: RSS
-    ax.axhline(out.delta_raw_rss,      color="grey",      linestyle=":",  linewidth=1.2,
-               label=f"raw RSS {out.delta_raw_rss:.5f}")
-    ax.axhline(out.delta_filtered_rss, color="steelblue", linestyle=":",  linewidth=1.2,
-               label=f"filt RSS {out.delta_filtered_rss:.5f}")
+    # 2 horizontal dotted lines: RMS
+    ax.axhline(out.delta_raw_rms      * S, color="dimgray",    linestyle=":",  linewidth=2.2,
+               label=f"raw RMS {out.delta_raw_rms * S:.3f}")
+    ax.axhline(out.delta_filtered_rms * S, color="dodgerblue", linestyle=":",  linewidth=2.2,
+               label=f"filt RMS {out.delta_filtered_rms * S:.3f}")
 
     # Average delta (decimated from 2^20 to ≤25k pts)
     avg_x, avg_y = _decimated_xy(out.average_delta_phase, out.average_delta, max_points=25_000)
-    ax.plot(avg_x, avg_y, color="darkorange", linewidth=1.4, label="avg delta")
+    ax.plot(avg_x, avg_y * S, color="darkorange", linewidth=1.4, label="avg delta")
 
     # LUT
-    ax.plot(out.lut_phase_rad, out.lut_delta_rad, color="tab:red", linewidth=1.6,
+    ax.plot(out.lut_phase_rad, out.lut_delta_rad * S, color="tab:red", linewidth=1.6,
             label=f"LUT ({lut_size})")
 
-    raw_pp   = out.delta_raw_max   - out.delta_raw_min
-    filt_pp  = out.delta_filtered_max - out.delta_filtered_min
+    raw_pp   = (out.delta_raw_max   - out.delta_raw_min)   * S
+    filt_pp  = (out.delta_filtered_max - out.delta_filtered_min) * S
     ax.set_title(
         f"Output side — {result.drive}  |  "
-        f"raw p-p {raw_pp:.5f} rad  filtered p-p {filt_pp:.5f} rad  |  "
-        f"raw RSS {out.delta_raw_rss:.5f}  filt RSS {out.delta_filtered_rss:.5f}  |  "
+        f"raw p-p {raw_pp:.3f} mrad  filtered p-p {filt_pp:.3f} mrad  |  "
+        f"raw RMS {out.delta_raw_rms * S:.3f} mrad  filt RMS {out.delta_filtered_rms * S:.3f} mrad  |  "
         f"{result.output_revolution_count} revs"
     )
     ax.set_xlabel("External encoder angle (rad)")
-    ax.set_ylabel("Delta (rad)")
+    ax.set_ylabel("Delta (mrad)")
     ax.set_xlim(0.0, TWO_PI)
     ax.xaxis.set_major_locator(MultipleLocator(np.pi / 2))
-    ax.legend(fontsize=8, loc="upper right")
+    ax.legend(fontsize=8, loc="upper right", markerscale=4)
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     return fig
@@ -1075,8 +1077,8 @@ def _summary_lines(result: EncoderLinearizationResult) -> list[str]:
         f"output_dominant_harmonic = {result.output_side.dominant_harmonic}",
         f"output_raw_peak_to_peak_rad = {result.output_side.delta_raw_max - result.output_side.delta_raw_min:.9g}",
         f"output_filtered_peak_to_peak_rad = {result.output_side.delta_filtered_max - result.output_side.delta_filtered_min:.9g}",
-        f"output_raw_rss_rad = {result.output_side.delta_raw_rss:.9g}",
-        f"output_filtered_rss_rad = {result.output_side.delta_filtered_rss:.9g}",
+        f"output_raw_rms_rad = {result.output_side.delta_raw_rms:.9g}",
+        f"output_filtered_rms_rad = {result.output_side.delta_filtered_rms:.9g}",
     ]
 
 
@@ -1141,8 +1143,8 @@ def run_encoder_linearization_analysis(
         "output_dominant_harmonic": result.output_side.dominant_harmonic,
         "output_raw_peak_to_peak_rad": result.output_side.delta_raw_max - result.output_side.delta_raw_min,
         "output_filtered_peak_to_peak_rad": result.output_side.delta_filtered_max - result.output_side.delta_filtered_min,
-        "output_raw_rss_rad": result.output_side.delta_raw_rss,
-        "output_filtered_rss_rad": result.output_side.delta_filtered_rss,
+        "output_raw_rms_rad": result.output_side.delta_raw_rms,
+        "output_filtered_rms_rad": result.output_side.delta_filtered_rms,
     }
 
 
@@ -1169,7 +1171,8 @@ def _main() -> None:
     folder = _latest_log(args.path) if args.latest else Path(args.path)
 
     if args.show_output_plot:
-        import matplotlib.pyplot as plt
+        import tkinter as tk
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
         enc_result = analyze_encoder_linearization(
             folder,
             drive=args.drive,
@@ -1177,8 +1180,14 @@ def _main() -> None:
             butter_order=args.butter_order,
             butter_cutoff_cpr=args.butter_cutoff_cpr,
         )
-        make_output_analysis_figure(enc_result)
-        plt.show()
+        fig = make_output_analysis_figure(enc_result)
+        root = tk.Tk()
+        root.title(f"Output Side Analysis — {enc_result.drive}")
+        canvas = FigureCanvasTkAgg(fig, root)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+        NavigationToolbar2Tk(canvas, root).update()
+        root.mainloop()
         return
 
     output = run_encoder_linearization_analysis(
