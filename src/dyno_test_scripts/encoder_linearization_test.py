@@ -36,7 +36,7 @@ import math
 import time
 
 
-def _post_process(script_file: str, drive: str, serial_number: str) -> None:
+def _post_process(script_file: str, drive: str) -> None:
     """Find this test's log folder and run encoder linearization analysis. Called in a daemon thread."""
     import time as _time, sys as _sys, os as _os
     from pathlib import Path
@@ -63,16 +63,13 @@ def _post_process(script_file: str, drive: str, serial_number: str) -> None:
     import dyno_encoder_linearization_analysis as _mod
     importlib.reload(_mod)
     try:
-        _mod.run_encoder_linearization_analysis(
-            str(log_folder), drive=drive, serial_number=serial_number.strip()
-        )
+        _mod.run_encoder_linearization_analysis(str(log_folder), drive=drive)
     except Exception:
         pass  # silent — test already finished, don't surface errors to user
 
 
 PARAMS = {
     "drive":               ["main", "dut"],
-    "serial_number":       "",
     "input_speed_rev_s":   1.0,
     "target_output_revs":  4.0,
     "timeout_s":           300.0,
@@ -135,6 +132,6 @@ def run(params: dict, commander, stop_event):
         import threading
         threading.Thread(
             target=_post_process,
-            args=(__file__, params["drive"], params["serial_number"]),
+            args=(__file__, params["drive"]),
             daemon=True,
         ).start()
