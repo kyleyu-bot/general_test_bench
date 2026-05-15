@@ -2339,6 +2339,19 @@ class DynoWindow(QMainWindow):
             subprocess.Popen(cmd, start_new_session=True,
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+        def _launch_as_user_ros2(script_path):
+            """Launch a Python script that requires ROS2, sourcing the ROS2 env first."""
+            bash_cmd = f'source /opt/ros/humble/setup.bash && python3 "{script_path}"'
+            sudo_user = os.environ.get("SUDO_USER")
+            if sudo_user:
+                cmd = ["sudo", "-u", sudo_user, "-H",
+                       "--preserve-env=DISPLAY,XAUTHORITY",
+                       "bash", "-c", bash_cmd]
+            else:
+                cmd = ["bash", "-c", bash_cmd]
+            subprocess.Popen(cmd, start_new_session=True,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
         repo = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
 
         btn_plot = QPushButton("Live Plot")
@@ -2349,6 +2362,12 @@ class DynoWindow(QMainWindow):
         btn_encoder.clicked.connect(lambda: _launch_as_user(
             ["python3", os.path.join(repo,
              "src/tools/post_processing/encoder_linearization/dyno_encoder_linearization_gui.py")]))
+
+        btn_enc_comp = QPushButton("Enc Comp Write")
+        btn_enc_comp.clicked.connect(lambda: _launch_as_user_ros2(
+            os.path.join(repo,
+             "src/tools/post_processing/encoder_linearization/dyno_encoder_comp_write_gui.py")))
+
         plot_btn_w = max(btn_plot.sizeHint().width(), btn_encoder.sizeHint().width())
         btn_plot.setFixedWidth(plot_btn_w)
         btn_encoder.setFixedWidth(plot_btn_w)
@@ -2480,6 +2499,7 @@ class DynoWindow(QMainWindow):
         pp_spacer_bottom.setFixedWidth(206)
         pp_bottom_lay.addWidget(pp_spacer_bottom)
         pp_bottom_lay.addWidget(btn_encoder)
+        pp_bottom_lay.addWidget(btn_enc_comp)
         pp_bottom_lay.addStretch(1)
 
         pp_row_lay.addWidget(pp_top)
