@@ -109,7 +109,7 @@ class OutputSideAnalysis:
 
     # --- Duck-type interface matching EncoderAnalysisSeries for the main figure ---
     label: str = "Output side"
-    x_label: str = "External encoder angle (rad)"
+    x_label: str = "Actuator output encoder angle (rad)"
     y_label: str = "Actuator output encoder angle (rad)"
 
     @property
@@ -189,12 +189,12 @@ def _read_serial_number(log_folder: Path) -> str | None:
     return None
 
 
-def _resolve_output_dir(log_folder: Path) -> Path:
-    sn = _read_serial_number(log_folder)
+def _resolve_output_dir(log_folder: Path, serial_number: str = "") -> Path:
+    sn = serial_number.strip() or _read_serial_number(log_folder)
     if sn:
         repo_root = Path(__file__).resolve().parents[4]
         hhmmss = log_folder.name.split("_")[0]
-        out = repo_root / "actuator_test_log" / sn / f"{hhmmss}_encoder_linearization"
+        out = repo_root / "actuator_test_log" / sn / sn / f"{hhmmss}_encoder_linearization"
     else:
         out = log_folder
     out.mkdir(parents=True, exist_ok=True)
@@ -679,11 +679,11 @@ def _analyze_output_side(
 
     delta_raw_cont     = ext_continuous - out_continuous
     delta_filt_cont    = _butter_filtfilt_spatial(
-        delta_raw_cont, ext_continuous, butter_cutoff_cpr, butter_order
+        delta_raw_cont, out_continuous, butter_cutoff_cpr, butter_order
     )
 
-    ext_wrap_all, raw_aligned, filt_aligned, resampled_segs = _resection_output(
-        ext_continuous, delta_raw_cont, delta_filt_cont, RESAMPLE_PTS_PER_REV
+    out_wrap_all, raw_aligned, filt_aligned, resampled_segs = _resection_output(
+        out_continuous, delta_raw_cont, delta_filt_cont, RESAMPLE_PTS_PER_REV
     )
 
     # Statistics
@@ -705,7 +705,7 @@ def _analyze_output_side(
     harmonics, fft_mag = _compute_fft(lut_delta)
 
     return OutputSideAnalysis(
-        x_rad=ext_wrap_all,
+        x_rad=out_wrap_all,
         delta_rad=filt_aligned,
         delta_raw=raw_aligned,
         delta_raw_min=delta_raw_min,
@@ -763,10 +763,10 @@ def analyze_encoder_linearization(
 
     input_side = _analyze_series(
         "Input side",
-        "Processed EL5032 angle per input rev (rad)",
         "Actuator input encoder angle (rad)",
-        input_y_rad,
+        "Processed EL5032 angle per input rev (rad)",
         input_x_rad,
+        input_y_rad,
         lut_size,
     )
     output_side = _analyze_output_side(
@@ -816,6 +816,17 @@ def save_lut_csv(
         filename = f"encoder_linearization_lut_{result.drive}_{result.lut_size}.csv"
     path = out_path / filename
     make_lut_dataframe(result).to_csv(path, index=False)
+    return path
+
+
+def _save_lut_txt(result: EncoderLinearizationResult, out_dir: str | Path) -> Path:
+    """Save LUT data points as a tab-separated .txt file."""
+    df = make_lut_dataframe(result)
+    path = Path(out_dir) / f"encoder_linearization_lut_{result.drive}_{result.lut_size}.txt"
+    lines = ["\t".join(df.columns)]
+    for row in df.itertuples(index=False):
+        lines.append("\t".join(f"{v:.9g}" if isinstance(v, float) else str(v) for v in row))
+    path.write_text("\n".join(lines) + "\n")
     return path
 
 
@@ -995,7 +1006,7 @@ def make_output_analysis_figure(result: EncoderLinearizationResult):
         f"raw RMS {out.delta_raw_rms * S:.3f} mrad  filt RMS {out.delta_filtered_rms * S:.3f} mrad  |  "
         f"{result.output_revolution_count} revs"
     )
-    ax.set_xlabel("External encoder angle (rad)")
+    ax.set_xlabel("Actuator output encoder angle (rad)")
     ax.set_ylabel("Delta (mrad)")
     ax.set_xlim(0.0, TWO_PI)
     ax.xaxis.set_major_locator(MultipleLocator(np.pi / 2))
@@ -1090,6 +1101,7 @@ def run_encoder_linearization_analysis(
     debug_output_segments: bool = False,
     butter_order: int = BUTTER_ORDER,
     butter_cutoff_cpr: float = BUTTER_CUTOFF_CPR,
+    serial_number: str = "",
 ) -> dict:
     """
     Load CSV, compute input/output encoder LUTs, save plots, LUT CSV, and summary.
@@ -1103,7 +1115,7 @@ def run_encoder_linearization_analysis(
         log_folder, drive=drive, lut_size=lut_size,
         butter_order=butter_order, butter_cutoff_cpr=butter_cutoff_cpr,
     )
-    out_dir = _resolve_output_dir(log_folder)
+    out_dir = _resolve_output_dir(log_folder, serial_number=serial_number)
 
     if debug_segments:
         fig = make_segment_debug_figure(result)
@@ -1130,10 +1142,12 @@ def run_encoder_linearization_analysis(
     fig, axes_info = make_encoder_linearization_figure(result)
     save_encoder_subplots(fig, axes_info, out_dir)
     lut_path = save_lut_csv(result, out_dir)
+    lut_txt_path = _save_lut_txt(result, out_dir)
     summary_path = out_dir / "encoder_linearization_values.txt"
     summary_path.write_text("\n".join(_summary_lines(result)) + "\n")
     return {
         "lut_path": str(lut_path),
+        "lut_txt_path": str(lut_txt_path),
         "summary_path": str(summary_path),
         "input_rms_rad": result.input_side.rms_rad,
         "input_peak_to_peak_rad": result.input_side.peak_to_peak_rad,
