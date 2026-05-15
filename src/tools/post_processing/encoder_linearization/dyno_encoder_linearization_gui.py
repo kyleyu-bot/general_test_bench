@@ -29,6 +29,7 @@ from dyno_encoder_linearization_analysis import (
     make_output_analysis_figure,
     save_encoder_subplots,
     save_lut_csv,
+    save_output_analysis_figure,
 )
 
 
@@ -38,6 +39,7 @@ class DynoEncoderLinearizationApp(tk.Tk):
         self.title("Dyno Encoder Linearization")
         self.geometry("1400x900")
         self._result = None
+        self._output_fig = None
         self._full_fig = None
         self._full_axes_info: list[tuple] = []
         self._canvases: dict[str, FigureCanvasTkAgg] = {}
@@ -148,6 +150,7 @@ class DynoEncoderLinearizationApp(tk.Tk):
             return
 
         self._result = result
+        self._output_fig = fig_output
         self._full_fig = fig_full
         self._full_axes_info = axes_info
         self._embed(fig_output, self._tab_output, "output")
@@ -198,10 +201,12 @@ class DynoEncoderLinearizationApp(tk.Tk):
         if not save_dir:
             return
         try:
+            output_plot = save_output_analysis_figure(self._output_fig, save_dir)
             plots = save_encoder_subplots(self._full_fig, self._full_axes_info, save_dir)
             lut_path = save_lut_csv(self._result, save_dir)
             self.status_var.set(
-                f"Saved LUT to {lut_path} and {len(plots)} plots to {save_dir}")
+                f"Saved LUT to {lut_path}, output analysis plot, "
+                f"and {len(plots)} full analysis plots to {save_dir}")
         except Exception as exc:
             messagebox.showerror("Save failed", str(exc))
 

@@ -194,7 +194,7 @@ def _resolve_output_dir(log_folder: Path, serial_number: str = "") -> Path:
     if sn:
         repo_root = Path(__file__).resolve().parents[4]
         hhmmss = log_folder.name.split("_")[0]
-        out = repo_root / "actuator_test_log" / sn / sn / f"{hhmmss}_encoder_linearization"
+        out = repo_root / "actuator_test_log" / sn / f"{hhmmss}_encoder_linearization"
     else:
         out = log_folder
     out.mkdir(parents=True, exist_ok=True)
@@ -1046,6 +1046,20 @@ def make_encoder_linearization_figure(
     return fig, axes_info
 
 
+def save_output_analysis_figure(
+    fig: Figure,
+    out_dir: str | Path,
+    dpi: int = 150,
+) -> Path:
+    out_path = Path(out_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+    canvas = FigureCanvasAgg(fig)
+    canvas.draw()
+    path = out_path / "encoder_linearization_output_analysis.png"
+    fig.savefig(str(path), dpi=dpi, bbox_inches="tight")
+    return path
+
+
 def save_encoder_subplots(
     fig: Figure,
     axes_info: list[tuple],
@@ -1139,6 +1153,8 @@ def run_encoder_linearization_analysis(
             "output_revolution_count": result.output_revolution_count,
         }
 
+    fig_output = make_output_analysis_figure(result)
+    save_output_analysis_figure(fig_output, out_dir)
     fig, axes_info = make_encoder_linearization_figure(result)
     save_encoder_subplots(fig, axes_info, out_dir)
     lut_path = save_lut_csv(result, out_dir)
