@@ -67,14 +67,14 @@ PRESETS: dict[str, BodePreset] = {
     "main_torque_drive": BodePreset(
         "Main Drive Torque Estimate",
         "main_rx_torque_command",
-        "main_tx_torque_nm",
+        "main_tx_power_stage_temp_2",
         "Nm",
         "Main torque command to drive-estimated torque.",
     ),
     "dut_torque_drive": BodePreset(
         "DUT Drive Torque Estimate",
         "dut_rx_torque_command",
-        "dut_tx_torque_nm",
+        "dut_tx_power_stage_temp_2",
         "Nm",
         "DUT torque command to drive-estimated torque.",
     ),

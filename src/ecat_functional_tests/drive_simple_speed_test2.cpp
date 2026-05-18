@@ -405,7 +405,7 @@ int main(int argc, char** argv) {
                     speed_cmd,
                     ds.measured_input_side_velocity_raw,
                     static_cast<double>(ds.velocity_command_received),
-                    static_cast<double>(ds.bus_voltage),
+                    static_cast<double>(ds.power_stage_temp_3),
                     static_cast<unsigned>(ds.status_word),
                     static_cast<unsigned>(ds.error_code)
                 );
