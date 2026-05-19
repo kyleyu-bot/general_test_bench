@@ -6,6 +6,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import csv
+import gzip
+import io
 
 import numpy as np
 
@@ -134,25 +136,43 @@ def resolve_csv_path(path: str | Path) -> Path:
     if p.is_file():
         return p
     if p.is_dir():
-        direct = p / "dyno_pdo.csv"
-        if direct.is_file():
-            return direct
-        matches = sorted(p.glob("**/dyno_pdo.csv"))
-        if matches:
-            return matches[-1]
-    raise FileNotFoundError(f"No dyno_pdo.csv found at {p}")
+        for name in ("dyno_pdo.csv.gz", "dyno_pdo.csv"):
+            if (p / name).is_file():
+                return p / name
+        all_gz  = sorted(p.glob("**/dyno_pdo.csv.gz"))
+        all_csv = sorted(p.glob("**/dyno_pdo.csv"))
+        candidates = all_gz + all_csv
+        if candidates:
+            return max(candidates, key=lambda x: x.stat().st_mtime)
+    raise FileNotFoundError(f"No dyno_pdo.csv(.gz) found at {p}")
 
 
 def latest_log(root: str | Path = "test_data_log") -> Path:
-    matches = sorted(Path(root).expanduser().glob("**/dyno_pdo.csv"))
+    base = Path(root).expanduser()
+    all_gz  = list(base.glob("**/dyno_pdo.csv.gz"))
+    all_csv = list(base.glob("**/dyno_pdo.csv"))
+    matches = all_gz + all_csv
     if not matches:
-        raise FileNotFoundError(f"No dyno_pdo.csv files found under {root}")
-    return matches[-1]
+        raise FileNotFoundError(f"No dyno_pdo.csv(.gz) files found under {root}")
+    return max(matches, key=lambda x: x.stat().st_mtime)
+
+
+def _open_csv(csv_path: Path):
+    """Return a text-mode file handle for either .csv or .csv.gz."""
+    if csv_path.suffix == ".gz":
+        return io.TextIOWrapper(gzip.open(csv_path, "rb"), newline="")
+    return csv_path.open(newline="")
+
+
+def read_csv_header(path: str | Path) -> list[str]:
+    csv_path = resolve_csv_path(path)
+    with _open_csv(csv_path) as fh:
+        return next(csv.reader(fh), [])
 
 
 def read_csv_columns(path: str | Path) -> dict[str, np.ndarray]:
     csv_path = resolve_csv_path(path)
-    with csv_path.open(newline="") as fh:
+    with _open_csv(csv_path) as fh:
         reader = csv.DictReader(fh)
         columns = {name: [] for name in reader.fieldnames or []}
         for row in reader:
@@ -311,6 +331,7 @@ def compute_bode(
     chirp_kind: str = "linear",
     trim_start_s: float | None = None,
     trim_end_s: float | None = None,
+    ref_scale: float = 1.0,
     detrend: bool = True,
     invert_response: bool = False,
     lowpass_hz: float | None = None,
@@ -331,19 +352,15 @@ def compute_bode(
         raise KeyError(f"Missing column(s): {', '.join(missing)}\nAvailable columns:\n{available}")
 
     time = time_from_columns(columns)
-    ref = np.asarray(columns[ref_name], dtype=float)
+    ref = np.asarray(columns[ref_name], dtype=float) * ref_scale
     resp_raw = np.asarray(columns[resp_name], dtype=float)
     if invert_response:
         resp_raw = -resp_raw
-    chirp_freq = chirp_frequency_profile(time, chirp_start_hz, chirp_end_hz, chirp_duration_s, chirp_kind)
-
-    arrays = [ref, resp_raw] + ([chirp_freq] if chirp_freq is not None else [])
-    keep = _valid_window(time, arrays, trim_start_s, trim_end_s)
+    keep = _valid_window(time, [ref, resp_raw], trim_start_s, trim_end_s)
     time = time[keep]
     ref = ref[keep]
     resp_raw = resp_raw[keep]
-    if chirp_freq is not None:
-        chirp_freq = chirp_freq[keep]
+    chirp_freq = chirp_frequency_profile(time, chirp_start_hz, chirp_end_hz, chirp_duration_s, chirp_kind)
 
     if time.size < 8:
         raise ValueError("Not enough samples after trimming")
@@ -422,6 +439,23 @@ def make_bode_figure(result: BodeResult, show_raw: bool = False):
         ax1.plot(result.f_3db, -3, "ro", markersize=5)
         ax1.annotate(f"-3 dB @ {result.f_3db:.2f} Hz", (result.f_3db, -3), xytext=(8, -14),
                      textcoords="offset points", fontsize=9, color="red")
+    if np.any(mask):
+        f_band = f[mask]
+        analysis = [
+            f"Band: {float(f_band[0]):.3g}-{float(f_band[-1]):.3g} Hz",
+            f"-3 dB: {result.f_3db:.3g} Hz" if result.f_3db is not None else "-3 dB: not found",
+            f"-90 deg: {result.f_90:.3g} Hz" if result.f_90 is not None else "-90 deg: not found",
+        ]
+        ax1.text(
+            0.02,
+            0.96,
+            "\n".join(analysis),
+            transform=ax1.transAxes,
+            ha="left",
+            va="top",
+            fontsize=9,
+            bbox={"facecolor": "white", "edgecolor": "0.8", "alpha": 0.75, "pad": 4},
+        )
     ax1.legend(fontsize=9)
 
     ax2.semilogx(f[mask], result.phase_deg[mask], color="darkorange", linewidth=1.2)

@@ -95,7 +95,7 @@
     {
       "name": "analog_input_interface",
       "position": 2,
-      "kind": "EL3002",
+      "kind": "ELM3002",
       "vendor_id": 2,
       "product_code": 1344368041,
       "scaling": {},

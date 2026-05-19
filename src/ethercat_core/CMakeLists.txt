@@ -2,7 +2,7 @@ add_library(ethercat_core STATIC
     master.cpp
     loop.cpp
     devices/beckhoff/el2004/adapter.cpp
-    devices/beckhoff/el3002/adapter.cpp
+    devices/beckhoff/elm3002/adapter.cpp
     devices/beckhoff/el5032/adapter.cpp
     devices/motor_drives/drive_bases/ds402/pdo.cpp
     devices/motor_drives/Novanta/Everest/pdo.cpp

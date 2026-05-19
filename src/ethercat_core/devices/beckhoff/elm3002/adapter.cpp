@@ -1,9 +1,9 @@
-#include "ethercat_core/devices/beckhoff/el3002/adapter.hpp"
+#include "ethercat_core/devices/beckhoff/elm3002/adapter.hpp"
 #include <cstring>
 #include <stdexcept>
 #include <sstream>
 
-namespace ethercat_core::beckhoff::el3002 {
+namespace ethercat_core::beckhoff::elm3002 {
 
 // ── Free function ─────────────────────────────────────────────────────────────
 
@@ -19,19 +19,19 @@ PaiStatus decodePaiStatus(uint32_t raw) {
     return s;
 }
 
-// ── El3002Adapter ─────────────────────────────────────────────────────────────
+// ── Elm3002Adapter ─────────────────────────────────────────────────────────────
 
-El3002Adapter::El3002Adapter(SlaveIdentity id, float ch1_scale, float ch2_scale)
+Elm3002Adapter::Elm3002Adapter(SlaveIdentity id, float ch1_scale, float ch2_scale)
     : ISlaveAdapter(std::move(id))
     , ch1_torque_scale_(validateTorqueScale(ch1_scale))
     , ch2_torque_scale_(validateTorqueScale(ch2_scale))
 {}
 
-std::vector<uint8_t> El3002Adapter::packRxPdo(const std::any& /*command*/) {
+std::vector<uint8_t> Elm3002Adapter::packRxPdo(const std::any& /*command*/) {
     return {};  // input-only terminal
 }
 
-std::any El3002Adapter::unpackTxPdo(
+std::any Elm3002Adapter::unpackTxPdo(
     const uint8_t* data, int size,
     uint64_t /*seq*/, int64_t /*stamp_ns*/,
     int64_t /*cycle_time_ns*/, int64_t /*dc_error_ns*/)
@@ -67,38 +67,38 @@ std::any El3002Adapter::unpackTxPdo(
     return d;
 }
 
-PaiStatus El3002Adapter::getPaiStatus1(const Data& d) const {
+PaiStatus Elm3002Adapter::getPaiStatus1(const Data& d) const {
     return decodePaiStatus(d.pai_status_1);
 }
-PaiStatus El3002Adapter::getPaiStatus2(const Data& d) const {
+PaiStatus Elm3002Adapter::getPaiStatus2(const Data& d) const {
     return decodePaiStatus(d.pai_status_2);
 }
 
-float El3002Adapter::scaleAdc(int32_t sample) {
+float Elm3002Adapter::scaleAdc(int32_t sample) {
     return static_cast<float>(sample) / static_cast<float>(1 << 23);
 }
-float El3002Adapter::scaleAdcToVoltage(int32_t sample) {
+float Elm3002Adapter::scaleAdcToVoltage(int32_t sample) {
     return scaleAdc(sample) * 5.0f;
 }
 
-float El3002Adapter::scaledTorqueCh1(const Data& d) const {
+float Elm3002Adapter::scaledTorqueCh1(const Data& d) const {
     return (scaleAdc(d.pai_samples_1) - ch1_offset_raw_) * ch1_torque_scale_;
 }
-float El3002Adapter::scaledTorqueCh2(const Data& d) const {
+float Elm3002Adapter::scaledTorqueCh2(const Data& d) const {
     return (scaleAdc(d.pai_samples_2) - ch2_offset_raw_) * ch2_torque_scale_;
 }
 
-void El3002Adapter::setCh1TorqueScale(float s) { ch1_torque_scale_ = validateTorqueScale(s); }
-void El3002Adapter::setCh2TorqueScale(float s) { ch2_torque_scale_ = validateTorqueScale(s); }
+void Elm3002Adapter::setCh1TorqueScale(float s) { ch1_torque_scale_ = validateTorqueScale(s); }
+void Elm3002Adapter::setCh2TorqueScale(float s) { ch2_torque_scale_ = validateTorqueScale(s); }
 
-void El3002Adapter::zeroTorqueCh1(const Data& d) {
+void Elm3002Adapter::zeroTorqueCh1(const Data& d) {
     ch1_offset_raw_ = scaleAdc(d.pai_samples_1);
 }
-void El3002Adapter::zeroTorqueCh2(const Data& d) {
+void Elm3002Adapter::zeroTorqueCh2(const Data& d) {
     ch2_offset_raw_ = scaleAdc(d.pai_samples_2);
 }
 
-float El3002Adapter::validateTorqueScale(float s) {
+float Elm3002Adapter::validateTorqueScale(float s) {
     for (float allowed : ALLOWED_TORQUE_SCALES) {
         if (s == allowed) return s;
     }
@@ -108,4 +108,4 @@ float El3002Adapter::validateTorqueScale(float s) {
     throw std::invalid_argument(oss.str());
 }
 
-} // namespace ethercat_core::beckhoff::el3002
+} // namespace ethercat_core::beckhoff::elm3002

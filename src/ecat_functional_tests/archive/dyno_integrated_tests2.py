@@ -17,8 +17,8 @@ if str(SRC_ROOT) not in sys.path:
 from ethercat_core.data_types import SystemCommand
 from ethercat_core.loop import EthercatLoop, LoopConfig
 from ethercat_core.master import EthercatMaster, al_state_name, load_topology, resolve_slave_position
-from ethercat_core.archive.devices.beckhoff.el3002.adapter import El3002SlaveAdapter
-from ethercat_core.archive.devices.beckhoff.el3002.data_types import El3002Data
+from ethercat_core.archive.devices.beckhoff.elm3002.adapter import Elm3002SlaveAdapter
+from ethercat_core.archive.devices.beckhoff.elm3002.data_types import Elm3002Data
 from ethercat_core.devices.beckhoff.el5032.adapter import El5032SlaveAdapter
 from ethercat_core.devices.beckhoff.el5032.data_types import El5032Data
 from ethercat_core.devices.motor_drives.Novanta.Everest.data_types import (
@@ -165,7 +165,7 @@ def main() -> int:
             )
 
         torque_adapter = runtime.adapters.get(args.torque_slave)
-        if not isinstance(torque_adapter, El3002SlaveAdapter):
+        if not isinstance(torque_adapter, Elm3002SlaveAdapter):
             raise RuntimeError(
                 f"Slave '{args.torque_slave}' is not an ELM3002. "
                 f"Adapter={type(torque_adapter).__name__}"
@@ -321,7 +321,7 @@ def main() -> int:
 
                 # ELM3002 torque.
                 torque_data = status.by_slave.get(args.torque_slave)
-                if not isinstance(torque_data, El3002Data):
+                if not isinstance(torque_data, Elm3002Data):
                     torque_str = "ch1_torque=unavailable ch2_torque=unavailable"
                 else:
                     torque_str = (

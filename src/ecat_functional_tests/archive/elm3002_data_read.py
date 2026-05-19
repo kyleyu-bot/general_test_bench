@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read and print Beckhoff EL3002 TxPDO data in the cyclic loop."""
+"""Read and print Beckhoff ELM3002 TxPDO data in the cyclic loop."""
 
 from __future__ import annotations
 
@@ -17,8 +17,8 @@ if str(SRC_ROOT) not in sys.path:
 
 from ethercat_core.loop import EthercatLoop, LoopConfig
 from ethercat_core.master import EthercatMaster, al_state_name, load_topology, resolve_slave_position
-from ethercat_core.archive.devices.beckhoff.el3002.adapter import El3002SlaveAdapter
-from ethercat_core.archive.devices.beckhoff.el3002.data_types import El3002Data
+from ethercat_core.archive.devices.beckhoff.elm3002.adapter import Elm3002SlaveAdapter
+from ethercat_core.archive.devices.beckhoff.elm3002.data_types import Elm3002Data
 
 
 def _parse_cpu_affinity(value: str) -> set[int]:
@@ -38,7 +38,7 @@ def _parse_cpu_affinity(value: str) -> set[int]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Read and print EL3002 TxPDO data using the cyclic loop."
+        description="Read and print ELM3002 TxPDO data using the cyclic loop."
     )
     parser.add_argument(
         "--topology",
@@ -48,7 +48,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--slave",
         default="analog_input_interface",
-        help="Configured EL3002 slave name to observe.",
+        help="Configured ELM3002 slave name to observe.",
     )
     parser.add_argument(
         "--duration-s",
@@ -65,7 +65,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--plot",
         action="store_true",
-        help="Show a live pyqtgraph window for EL3002 processed values.",
+        help="Show a live pyqtgraph window for ELM3002 processed values.",
     )
     parser.add_argument(
         "--plot-window-s",
@@ -88,7 +88,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _format_status_line(adapter: El3002SlaveAdapter, data: El3002Data) -> str:
+def _format_status_line(adapter: Elm3002SlaveAdapter, data: Elm3002Data) -> str:
     return (
         f"ch1_voltage={adapter.get_pai_samples_1_scaled_voltage(data):.4f}V "
         f"ch1_torque={adapter.get_pai_samples_1_scaled_torque(data):.4f} "
@@ -100,7 +100,7 @@ def _format_status_line(adapter: El3002SlaveAdapter, data: El3002Data) -> str:
 def _run_live_plot(
     *,
     loop: EthercatLoop,
-    adapter: El3002SlaveAdapter,
+    adapter: Elm3002SlaveAdapter,
     slave_name: str,
     duration_s: float,
     window_s: float,
@@ -113,8 +113,8 @@ def _run_live_plot(
             "for example: python3 -m pip install pyqtgraph"
         ) from exc
 
-    app = pg.mkQApp("EL3002 Live Plot")
-    win = pg.GraphicsLayoutWidget(title=f"EL3002 Live Plot: {slave_name}")
+    app = pg.mkQApp("ELM3002 Live Plot")
+    win = pg.GraphicsLayoutWidget(title=f"ELM3002 Live Plot: {slave_name}")
     win.resize(1200, 700)
 
     voltage_plot = win.addPlot(title="Voltage")
@@ -160,7 +160,7 @@ def _run_live_plot(
             return
 
         status = loop.get_status().by_slave.get(slave_name)
-        if not isinstance(status, El3002Data):
+        if not isinstance(status, Elm3002Data):
             return
 
         t = now - start
@@ -211,9 +211,9 @@ def main() -> int:
     try:
         runtime = master.initialize()
         adapter = runtime.adapters.get(args.slave)
-        if not isinstance(adapter, El3002SlaveAdapter):
+        if not isinstance(adapter, Elm3002SlaveAdapter):
             raise RuntimeError(
-                f"Slave '{args.slave}' is not an EL3002. Adapter={type(adapter).__name__}"
+                f"Slave '{args.slave}' is not an ELM3002. Adapter={type(adapter).__name__}"
             )
 
         loop = EthercatLoop(
@@ -254,7 +254,7 @@ def main() -> int:
                 slave = runtime.slaves_by_name[args.slave]
                 al = al_state_name(int(slave.state))
                 cycle_us = f"{stats.last_cycle_time_ns / 1000:.1f}"
-                if not isinstance(data, El3002Data):
+                if not isinstance(data, Elm3002Data):
                     print(f"al={al} cycle_us={cycle_us} pai_status_1=unavailable  pai_samples_1=unavailable  pai_status_2=unavailable  pai_samples_2=unavailable")
                 else:
                     print(f"al={al} cycle_us={cycle_us} {_format_status_line(adapter, data)}")

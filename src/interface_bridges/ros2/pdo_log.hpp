@@ -99,9 +99,11 @@ struct PdoLogRecord {
     bool     dut_rx_enable               = false;
 
     // ── Sensors ───────────────────────────────────────────────────────────────
-    uint32_t encoder_count  = 0;
-    float    torque_ch1_nm  = 0.f;
-    float    torque_ch2_nm  = 0.f;
+    uint32_t encoder_count   = 0;
+    float    torque_ch1_nm   = 0.f;
+    float    torque_ch2_nm   = 0.f;
+    float    main_gear_ratio = 1.f;
+    float    dut_gear_ratio  = 1.f;
 };
 
 // CSV column header matching the field order in record_to_csv() (bridge_ros2.cpp).
@@ -130,7 +132,7 @@ inline constexpr const char* PDO_LOG_CSV_HEADER =
     "dut_rx_vel_kp,dut_rx_vel_ki,dut_rx_vel_kd,"
     "dut_rx_pos_kp,dut_rx_pos_ki,dut_rx_pos_kd,dut_rx_enable,"
     // sensors
-    "encoder_count,torque_ch1_nm,torque_ch2_nm";
+    "encoder_count,torque_ch1_nm,torque_ch2_nm,main_gear_ratio,dut_gear_ratio";
 
 
 // ── Ring buffer ───────────────────────────────────────────────────────────────

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True, slots=True)
-class El3002PdoField:
+class Elm3002PdoField:
     """One ELM3002 TX PDO field mapping."""
 
     name: str
@@ -24,44 +24,44 @@ class El3002PdoField:
 #   0x1A22  PAI Samples Ch.2   (pai_samples_2,  4 bytes)  — subindex001 INT32
 #
 # Reference: ELM3002.java / YoELM3002.java (phantom-hardware repo)
-EL3002_INPUT_FIELD_SIZE = 4
-EL3002_SAMPLES_FIELD_SIZE = 4
-EL3002_TIMESTAMP_FIELD_SIZE = 8
-EL3002_TX_PDO_FIELDS = (
-    El3002PdoField("pai_status_1", 0x1A00, 0, EL3002_INPUT_FIELD_SIZE),
-    El3002PdoField(
+ELM3002_INPUT_FIELD_SIZE = 4
+ELM3002_SAMPLES_FIELD_SIZE = 4
+ELM3002_TIMESTAMP_FIELD_SIZE = 8
+ELM3002_TX_PDO_FIELDS = (
+    Elm3002PdoField("pai_status_1", 0x1A00, 0, ELM3002_INPUT_FIELD_SIZE),
+    Elm3002PdoField(
         "pai_samples_1",
         0x1A01,
-        EL3002_INPUT_FIELD_SIZE,
-        EL3002_SAMPLES_FIELD_SIZE,
+        ELM3002_INPUT_FIELD_SIZE,
+        ELM3002_SAMPLES_FIELD_SIZE,
         signed=True,
     ),
-    El3002PdoField(
+    Elm3002PdoField(
         "timestamp",
         0x1A10,
-        EL3002_INPUT_FIELD_SIZE + EL3002_SAMPLES_FIELD_SIZE,
-        EL3002_TIMESTAMP_FIELD_SIZE,
+        ELM3002_INPUT_FIELD_SIZE + ELM3002_SAMPLES_FIELD_SIZE,
+        ELM3002_TIMESTAMP_FIELD_SIZE,
     ),
-    El3002PdoField(
+    Elm3002PdoField(
         "pai_status_2",
         0x1A21,
-        EL3002_INPUT_FIELD_SIZE
-        + EL3002_SAMPLES_FIELD_SIZE
-        + EL3002_TIMESTAMP_FIELD_SIZE,
-        EL3002_INPUT_FIELD_SIZE,
+        ELM3002_INPUT_FIELD_SIZE
+        + ELM3002_SAMPLES_FIELD_SIZE
+        + ELM3002_TIMESTAMP_FIELD_SIZE,
+        ELM3002_INPUT_FIELD_SIZE,
     ),
-    El3002PdoField(
+    Elm3002PdoField(
         "pai_samples_2",
         0x1A22,
-        EL3002_INPUT_FIELD_SIZE
-        + EL3002_SAMPLES_FIELD_SIZE
-        + EL3002_TIMESTAMP_FIELD_SIZE
-        + EL3002_INPUT_FIELD_SIZE,
-        EL3002_SAMPLES_FIELD_SIZE,
+        ELM3002_INPUT_FIELD_SIZE
+        + ELM3002_SAMPLES_FIELD_SIZE
+        + ELM3002_TIMESTAMP_FIELD_SIZE
+        + ELM3002_INPUT_FIELD_SIZE,
+        ELM3002_SAMPLES_FIELD_SIZE,
         signed=True,
     ),
 )
-EL3002_TX_PDO_SIZE = sum(field.size for field in EL3002_TX_PDO_FIELDS)
+ELM3002_TX_PDO_SIZE = sum(field.size for field in ELM3002_TX_PDO_FIELDS)
 
 
 # Bit layout of the 32-bit PAI Status word (0x6000 ch1 / 0x6010 ch2):
@@ -114,12 +114,12 @@ def decode_pai_status(raw: int) -> Elm3002PaiStatus:
 
 
 @dataclass(slots=True)
-class El3002Command:
+class Elm3002Command:
     """Command model for the ELM3002 (input-only terminal)."""
 
 
 @dataclass(slots=True)
-class El3002Data:
+class Elm3002Data:
     """Observed ELM3002 process-data state."""
 
     pai_status_1: int = 0

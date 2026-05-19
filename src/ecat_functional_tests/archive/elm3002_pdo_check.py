@@ -30,8 +30,8 @@ if str(SRC_ROOT) not in sys.path:
 
 from ethercat_core.loop import EthercatLoop, LoopConfig
 from ethercat_core.master import EthercatMaster, al_state_name, load_topology, resolve_slave_position
-from ethercat_core.archive.devices.beckhoff.el3002.adapter import El3002SlaveAdapter
-from ethercat_core.archive.devices.beckhoff.el3002.data_types import EL3002_TX_PDO_FIELDS, El3002Data
+from ethercat_core.archive.devices.beckhoff.elm3002.adapter import Elm3002SlaveAdapter
+from ethercat_core.archive.devices.beckhoff.elm3002.data_types import ELM3002_TX_PDO_FIELDS, Elm3002Data
 
 # Map section index → (PDO name, PDO index label)
 _SECTION_META = {
@@ -45,7 +45,7 @@ _SECTION_META = {
 
 # Pre-build offset/size lookup from the canonical field definitions.
 _FIELD_SLICE: dict[str, tuple[int, int]] = {
-    f.name: (f.offset, f.offset + f.size) for f in EL3002_TX_PDO_FIELDS
+    f.name: (f.offset, f.offset + f.size) for f in ELM3002_TX_PDO_FIELDS
 }
 
 
@@ -79,7 +79,7 @@ def _parse_cpu_affinity(value: str) -> set[int]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Print EL3002 TxPDO sections as hex for protocol inspection.",
+        description="Print ELM3002 TxPDO sections as hex for protocol inspection.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="\n".join(
             f"  {k}: {v[1]}" for k, v in _SECTION_META.items()
@@ -100,7 +100,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--slave",
         default="analog_input_interface",
-        help="Configured EL3002 slave name to observe.",
+        help="Configured ELM3002 slave name to observe.",
     )
     parser.add_argument(
         "--duration-s",
@@ -161,9 +161,9 @@ def main() -> int:
     try:
         runtime = master.initialize()
         adapter = runtime.adapters.get(args.slave)
-        if not isinstance(adapter, El3002SlaveAdapter):
+        if not isinstance(adapter, Elm3002SlaveAdapter):
             raise RuntimeError(
-                f"Slave '{args.slave}' is not an EL3002. Adapter={type(adapter).__name__}"
+                f"Slave '{args.slave}' is not an ELM3002. Adapter={type(adapter).__name__}"
             )
 
         loop = EthercatLoop(
@@ -222,7 +222,7 @@ def main() -> int:
 
                 if age_ns > stale_threshold_ns:
                     print(f"[STALE {age_ns / 1e6:.1f}ms] {pdo_ping}")
-                elif not isinstance(data, El3002Data) or not data.raw_pdo:
+                elif not isinstance(data, Elm3002Data) or not data.raw_pdo:
                     print(f"pdo=unavailable  {pdo_ping}")
                 else:
                     payload = _extract_section(data.raw_pdo, args.section)

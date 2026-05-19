@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace ethercat_core::beckhoff::el3002 {
+namespace ethercat_core::beckhoff::elm3002 {
 
 // ELM3002 default TX PDO layout (24 bytes total):
 //   0x1A00  PAI Status Ch.1   — uint32, offset  0
@@ -45,4 +45,4 @@ struct Data {
     std::vector<uint8_t> raw_pdo;
 };
 
-} // namespace ethercat_core::beckhoff::el3002
+} // namespace ethercat_core::beckhoff::elm3002

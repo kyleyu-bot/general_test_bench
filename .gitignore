@@ -2,6 +2,7 @@ build/
 log/
 install/
 test_data_log/
+actuator_test_log/
 src/interface_bridges/**/__pycache__/
 __pycache__/
 *.pyc

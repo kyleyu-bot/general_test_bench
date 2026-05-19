@@ -31,8 +31,8 @@
 #include "ethercat_core/default_adapter_factory.hpp"
 #include "ethercat_core/devices/beckhoff/el2004/adapter.hpp"
 #include "ethercat_core/devices/beckhoff/el2004/data_types.hpp"
-#include "ethercat_core/devices/beckhoff/el3002/adapter.hpp"
-#include "ethercat_core/devices/beckhoff/el3002/data_types.hpp"
+#include "ethercat_core/devices/beckhoff/elm3002/adapter.hpp"
+#include "ethercat_core/devices/beckhoff/elm3002/data_types.hpp"
 #include "ethercat_core/devices/beckhoff/el5032/adapter.hpp"
 #include "ethercat_core/devices/beckhoff/el5032/data_types.hpp"
 #include "ethercat_core/devices/motor_drives/Novanta/Volcano/adapter.hpp"
@@ -301,9 +301,9 @@ int main(int argc, char** argv) {
         }
     }
 
-    auto* el3002 = dynamic_cast<beckhoff::el3002::El3002Adapter*>(
+    auto* elm3002 = dynamic_cast<beckhoff::elm3002::Elm3002Adapter*>(
         rt->adapters.at(args.torque_slave).get());
-    if (!el3002) {
+    if (!elm3002) {
         std::fprintf(stderr, "Slave '%s' is not an ELM3002 adapter.\n", args.torque_slave.c_str());
         master.close();
         return 1;
@@ -450,11 +450,11 @@ int main(int argc, char** argv) {
                 std::snprintf(torque_buf, sizeof(torque_buf),
                     "ch1_v=unavailable ch1_t=unavailable ch2_v=unavailable ch2_t=unavailable");
             } else {
-                const auto& d = std::any_cast<const beckhoff::el3002::Data&>(torque_it->second);
-                const float ch1_v = beckhoff::el3002::El3002Adapter::scaleAdcToVoltage(d.pai_samples_1);
-                const float ch2_v = beckhoff::el3002::El3002Adapter::scaleAdcToVoltage(d.pai_samples_2);
-                const float ch1_t = el3002->scaledTorqueCh1(d);
-                const float ch2_t = el3002->scaledTorqueCh2(d);
+                const auto& d = std::any_cast<const beckhoff::elm3002::Data&>(torque_it->second);
+                const float ch1_v = beckhoff::elm3002::Elm3002Adapter::scaleAdcToVoltage(d.pai_samples_1);
+                const float ch2_v = beckhoff::elm3002::Elm3002Adapter::scaleAdcToVoltage(d.pai_samples_2);
+                const float ch1_t = elm3002->scaledTorqueCh1(d);
+                const float ch2_t = elm3002->scaledTorqueCh2(d);
                 std::snprintf(torque_buf, sizeof(torque_buf),
                     "ch1_v=%.4f ch1_t=%.4f ch2_v=%.4f ch2_t=%.4f",
                     static_cast<double>(ch1_v), static_cast<double>(ch1_t),

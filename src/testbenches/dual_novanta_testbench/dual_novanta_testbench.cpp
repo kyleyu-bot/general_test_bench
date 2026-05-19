@@ -1,7 +1,7 @@
 #include "dual_novanta_testbench.hpp"
 
 #include "ethercat_core/devices/beckhoff/el2004/data_types.hpp"
-#include "ethercat_core/devices/beckhoff/el3002/data_types.hpp"
+#include "ethercat_core/devices/beckhoff/elm3002/data_types.hpp"
 #include "ethercat_core/devices/beckhoff/el5032/data_types.hpp"
 #include "ethercat_core/devices/motor_drives/Novanta/Volcano/data_types.hpp"
 
@@ -32,7 +32,7 @@ DualNovantaTestbench::DualNovantaTestbench(
     const std::string& torque_slave,
     const std::string& io_slave,
     bool               dut_present,
-    beckhoff::el3002::El3002Adapter* el3002,
+    beckhoff::elm3002::Elm3002Adapter* elm3002,
     int  drive_soem_idx,
     int  dut_soem_idx,
     int  main_out_enc_bits,
@@ -43,7 +43,7 @@ DualNovantaTestbench::DualNovantaTestbench(
     , torque_slave_(torque_slave)
     , io_slave_(io_slave)
     , dut_present_(dut_present)
-    , el3002_(el3002)
+    , elm3002_(elm3002)
     , drive_soem_idx_(drive_soem_idx)
     , dut_soem_idx_(dut_soem_idx)
     , main_out_enc_bits_(main_out_enc_bits)
@@ -85,6 +85,18 @@ void DualNovantaTestbench::extractAndSeedGains(
 {
     const DriveGains main_gains = extractGains_(rt, drive_slave_);
     const DriveGains dut_gains  = extractGains_(rt, dut_slave_);
+
+    // sensor_ratio = (rev at position sensor) / (rev at velocity sensor)
+    // gear_ratio   = 1 / sensor_ratio
+    auto read_gear_ratio = [&](const std::string& slave) -> float {
+        auto it = rt.startup_params.find(slave);
+        if (it == rt.startup_params.end()) return 1.f;
+        auto pit = it->second.find("sensor_ratio");
+        if (pit == it->second.end() || std::abs(pit->second) < 1e-6f) return 1.f;
+        return 1.f / pit->second;
+    };
+    main_gear_ratio_ = read_gear_ratio(drive_slave_);
+    dut_gear_ratio_  = read_gear_ratio(dut_slave_);
 
     std::lock_guard<std::mutex> lk(cmd_mutex);
     cmd_state.main_torque_kp      = main_gains.torque_kp;
@@ -284,6 +296,13 @@ EthercatLoop::CycleCallback DualNovantaTestbench::makeCallback(
         apply_fg(main_cmd, fg_main_, main_captured_pos_, main_out_enc_bits_);
         apply_fg(dut_cmd,  fg_dut_,  dut_captured_pos_,  dut_out_enc_bits_);
 
+        last_main_fg_out_.store(fg_main_.isEnabled()
+            ? static_cast<float>(fg_main_.getValue()) : 0.f,
+            std::memory_order_relaxed);
+        last_dut_fg_out_.store(fg_dut_.isEnabled()
+            ? static_cast<float>(fg_dut_.getValue()) : 0.f,
+            std::memory_order_relaxed);
+
         beckhoff::el2004::Command io_cmd;
         io_cmd.output_1 = cmd.hold_output1;
 
@@ -387,10 +406,13 @@ EthercatLoop::CycleCallback DualNovantaTestbench::makeCallback(
 
         auto torque_it = status.by_slave.find(torque_slave_);
         if (torque_it != status.by_slave.end() && torque_it->second.has_value()) {
-            const auto& d = std::any_cast<const beckhoff::el3002::Data&>(torque_it->second);
-            rec.torque_ch1_nm = el3002_->scaledTorqueCh1(d);
-            rec.torque_ch2_nm = el3002_->scaledTorqueCh2(d);
+            const auto& d = std::any_cast<const beckhoff::elm3002::Data&>(torque_it->second);
+            rec.torque_ch1_nm = elm3002_->scaledTorqueCh1(d);
+            rec.torque_ch2_nm = elm3002_->scaledTorqueCh2(d);
         }
+
+        rec.main_gear_ratio = main_gear_ratio_;
+        rec.dut_gear_ratio  = dut_gear_ratio_;
 
         log_buf.push(rec);
         return sys_cmd;
@@ -444,7 +466,8 @@ std::string DualNovantaTestbench::serializeToCsvRow(const dyno::PdoLogRecord& r)
       << r.dut_rx_pos_ki             << ',' << r.dut_rx_pos_kd              << ','
       << static_cast<int>(r.dut_rx_enable) << ',';
     // sensors
-    o << r.encoder_count << ',' << r.torque_ch1_nm << ',' << r.torque_ch2_nm;
+    o << r.encoder_count  << ',' << r.torque_ch1_nm   << ',' << r.torque_ch2_nm << ','
+      << r.main_gear_ratio << ',' << r.dut_gear_ratio;
     return o.str();
 }
 

@@ -34,8 +34,8 @@
 #include "ethercat_core/loop.hpp"
 #include "ethercat_core/master.hpp"
 #include "ethercat_core/default_adapter_factory.hpp"
-#include "ethercat_core/devices/beckhoff/el3002/adapter.hpp"
-#include "ethercat_core/devices/beckhoff/el3002/data_types.hpp"
+#include "ethercat_core/devices/beckhoff/elm3002/adapter.hpp"
+#include "ethercat_core/devices/beckhoff/elm3002/data_types.hpp"
 #include "ethercat_core/devices/beckhoff/el5032/data_types.hpp"
 #include "ethercat_core/devices/motor_drives/Novanta/Volcano/data_types.hpp"
 #include "ethercat_core/devices/motor_drives/drive_bases/ds402/data_types.hpp"
@@ -54,9 +54,12 @@ extern "C" {
 
 #include <nlohmann/json.hpp>
 
+#include <zlib.h>
+
 #include <algorithm>
 #include <fstream>
 #include <cmath>
+#include <pwd.h>
 #include <limits>
 #include <any>
 #include <atomic>
@@ -86,6 +89,8 @@ using json            = nlohmann::json;
 
 static std::atomic<bool> g_shutdown{false};
 static std::atomic<bool> g_rotate_log{false};
+static std::string       g_script_name;
+static std::mutex        g_script_name_mtx;
 static void onSignal(int) { g_shutdown.store(true); }
 
 // ── Shared command state (written by ROS2 subscriber, read by main loop) ──────
@@ -137,6 +142,7 @@ public:
         pub_ch2_t_ = create_publisher<std_msgs::msg::Float64>("/dyno/torque/ch2",         10);
         pub_sdo_   = create_publisher<std_msgs::msg::String>("/dyno/sdo_response",        10);
         pub_bus_   = create_publisher<std_msgs::msg::String>("/dyno/bus_status",          10);
+        pub_rt_cmd_ = create_publisher<std_msgs::msg::String>("/dyno/rt_command",         10);
 
         // Command subscriber
         sub_cmd_ = create_subscription<std_msgs::msg::String>(
@@ -188,6 +194,10 @@ public:
                     g_cmd_state.zero_torque_ch1    |= j.value("zero_torque_ch1", false);
                     g_cmd_state.zero_torque_ch2    |= j.value("zero_torque_ch2", false);
                     g_cmd_state.save_log           |= j.value("save_log",        false);
+                    if (j.contains("script_name")) {
+                        std::lock_guard<std::mutex> snlk(g_script_name_mtx);
+                        g_script_name = j.value("script_name", "");
+                    }
                     // Function generator config
                     g_cmd_state.main_fg_enable       = j.value("main_fg_enable",       false);
                     g_cmd_state.main_fg_waveform     = j.value("main_fg_waveform",     g_cmd_state.main_fg_waveform);
@@ -329,6 +339,44 @@ public:
         }
     }
 
+    // Publish the effective per-cycle command, substituting the FG output when
+    // the function generator is enabled.
+    void publishRtCommand(const CommandState& cmd,
+                          float main_fg_out, float dut_fg_out)
+    {
+        using CT = testbench_utils::ControlType;
+
+        auto fill = [](json& j, const std::string& pfx,
+                       bool fg_en, int fg_ct, float fg_out,
+                       float raw_vel, float raw_pos,
+                       float raw_torque, float raw_current) {
+            if (fg_en) {
+                switch (static_cast<CT>(fg_ct)) {
+                case CT::VELOCITY: j[pfx + "velocity"] = fg_out;  break;
+                case CT::POSITION: j[pfx + "position"] = fg_out;  break;
+                case CT::TORQUE:   j[pfx + "torque"]   = fg_out;  break;
+                case CT::CURRENT:  j[pfx + "current"]  = fg_out;  break;
+                default: break;
+                }
+            } else {
+                j[pfx + "velocity"] = raw_vel;
+                j[pfx + "position"] = raw_pos;
+                j[pfx + "torque"]   = raw_torque;
+                j[pfx + "current"]  = raw_current;
+            }
+        };
+
+        json j;
+        fill(j, "main_", cmd.main_fg_enable, cmd.main_fg_control_type, main_fg_out,
+             cmd.main_speed, cmd.main_position, cmd.main_torque, cmd.main_current);
+        fill(j, "dut_",  cmd.dut_fg_enable,  cmd.dut_fg_control_type,  dut_fg_out,
+             cmd.dut_speed,  cmd.dut_position,  cmd.dut_torque,  cmd.dut_current);
+
+        std_msgs::msg::String msg;
+        msg.data = j.dump();
+        pub_rt_cmd_->publish(msg);
+    }
+
 private:
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr   pub_main_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr   pub_dut_;
@@ -338,6 +386,7 @@ private:
     rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr  pub_ch2_t_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr   pub_sdo_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr   pub_bus_;
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr   pub_rt_cmd_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_cmd_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_sdo_;
     int drive_soem_idx_ = 1;
@@ -346,22 +395,47 @@ private:
 
 // ── main ──────────────────────────────────────────────────────────────────────
 
-/// Create test_data_log/YYYY-MM-DD/HHMMSS/dyno_pdo.csv, making all parent dirs.
-static std::string make_run_csv_path(rclcpp::Logger logger)
+/// Chown path to the original unprivileged user.
+/// Prefers DYNO_ORIGINAL_USER (set by dyno_gui.py before the nested sudo -E
+/// that launches this process) because sudo always overwrites SUDO_USER with
+/// the user who ran *that* sudo invocation — which is root when the GUI
+/// (already root) re-invokes sudo to start the bridge.
+static void chown_to_sudo_user(const std::string& path)
+{
+    const char* sudo_user = std::getenv("DYNO_ORIGINAL_USER");
+    if (!sudo_user || !*sudo_user) sudo_user = std::getenv("SUDO_USER");
+    if (!sudo_user || !*sudo_user) return;
+    const struct passwd* pw = getpwnam(sudo_user);
+    if (!pw) return;
+    chown(path.c_str(), pw->pw_uid, pw->pw_gid);
+}
+
+/// Create test_data_log/YYYY-MM-DD/HHMMSS[_script_name]/dyno_pdo.csv, making all parent dirs.
+static std::string make_run_csv_path(rclcpp::Logger logger,
+                                     const std::string& script_name = "")
 {
     std::time_t t    = std::time(nullptr);
     std::tm*    tm_  = std::localtime(&t);
     char date_buf[16], time_buf[8];
     std::strftime(date_buf, sizeof(date_buf), "%Y-%m-%d", tm_);
     std::strftime(time_buf, sizeof(time_buf), "%H%M%S",   tm_);
-    std::string run_dir = std::string("test_data_log/") + date_buf + "/" + time_buf;
+    std::string suffix;
+    if (!script_name.empty()) {
+        suffix = "_";
+        for (char c : script_name)
+            suffix += (std::isalnum(static_cast<unsigned char>(c)) ? c : '_');
+        while (!suffix.empty() && suffix.back() == '_') suffix.pop_back();
+    }
+    std::string run_dir = std::string("test_data_log/") + date_buf + "/" + time_buf + suffix;
     std::error_code ec;
     std::filesystem::create_directories(run_dir, ec);
     if (ec) {
         RCLCPP_WARN(logger, "Could not create log dir '%s': %s",
                     run_dir.c_str(), ec.message().c_str());
     }
-    return run_dir + "/dyno_pdo.csv";
+    chown_to_sudo_user(std::string("test_data_log/") + date_buf);
+    chown_to_sudo_user(run_dir);
+    return run_dir + "/dyno_pdo.csv.gz";
 }
 
 int main(int argc, char** argv) {
@@ -441,9 +515,9 @@ int main(int argc, char** argv) {
         RCLCPP_WARN(node->get_logger(), "DUT slave '%s' not found — running without DUT.", dut_slave.c_str());
     }
 
-    auto* el3002 = dynamic_cast<beckhoff::el3002::El3002Adapter*>(
+    auto* elm3002 = dynamic_cast<beckhoff::elm3002::Elm3002Adapter*>(
         rt->adapters.at(torque_slave).get());
-    if (!el3002) {
+    if (!elm3002) {
         RCLCPP_FATAL(node->get_logger(), "Slave '%s' is not an ELM3002.", torque_slave.c_str());
         master.close();
         executor->cancel();
@@ -488,9 +562,11 @@ int main(int argc, char** argv) {
     EthercatLoop loop(*rt, cfg.cycle_hz, rt_cfg);
 
     // ── CSV logging setup ─────────────────────────────────────────────────────
-    std::string   log_path = make_run_csv_path(node->get_logger());
-    std::ofstream csv_file(log_path);
-    csv_file << dyno::PDO_LOG_CSV_HEADER << '\n';
+    std::string log_path = make_run_csv_path(node->get_logger());
+    gzFile csv_gz = gzopen(log_path.c_str(), "wb1");
+    gzwrite(csv_gz, dyno::PDO_LOG_CSV_HEADER, static_cast<unsigned>(strlen(dyno::PDO_LOG_CSV_HEADER)));
+    gzwrite(csv_gz, "\n", 1);
+    chown_to_sudo_user(log_path);
     RCLCPP_INFO(node->get_logger(), "PDO log: %s", log_path.c_str());
 
     // Encoder resolution — read from topology config; defaults live in SlaveConfig::Scaling.
@@ -512,7 +588,7 @@ int main(int argc, char** argv) {
 
     DualNovantaTestbench testbench(
         drive_slave, dut_slave, encoder_slave, torque_slave, io_slave,
-        dut_present, el3002,
+        dut_present, elm3002,
         drive_soem_idx, dut_soem_idx,
         main_out_enc_bits, dut_out_enc_bits
     );
@@ -537,19 +613,24 @@ int main(int argc, char** argv) {
     std::thread log_drain([&]() {
         while (!g_shutdown.load() || !log_buf.empty()) {
             while (auto rec = log_buf.pop()) {
-                csv_file << DualNovantaTestbench::serializeToCsvRow(*rec) << '\n';
+                std::string row = DualNovantaTestbench::serializeToCsvRow(*rec) + '\n';
+                gzwrite(csv_gz, row.c_str(), static_cast<unsigned>(row.size()));
             }
             if (g_rotate_log.exchange(false)) {
-                csv_file.flush();
-                csv_file.close();
-                log_path = make_run_csv_path(node->get_logger());
-                csv_file.open(log_path);
-                csv_file << dyno::PDO_LOG_CSV_HEADER << '\n';
+                gzflush(csv_gz, Z_SYNC_FLUSH);
+                gzclose(csv_gz);
+                std::string sname;
+                { std::lock_guard<std::mutex> lk(g_script_name_mtx); sname = g_script_name; }
+                log_path = make_run_csv_path(node->get_logger(), sname);
+                csv_gz = gzopen(log_path.c_str(), "wb1");
+                gzwrite(csv_gz, dyno::PDO_LOG_CSV_HEADER, static_cast<unsigned>(strlen(dyno::PDO_LOG_CSV_HEADER)));
+                gzwrite(csv_gz, "\n", 1);
+                chown_to_sudo_user(log_path);
                 RCLCPP_INFO(node->get_logger(), "PDO log rotated: %s", log_path.c_str());
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
-        csv_file.close();
+        gzclose(csv_gz);
     });
 
     // ── Register cycle callback — fires from RT thread at EtherCAT cycle rate ─
@@ -797,8 +878,8 @@ int main(int argc, char** argv) {
         // read/write is naturally atomic, so the worst case is one stale cycle during
         // a user-initiated scale change. Acceptable for an infrequent measurement setting.
         try {
-            el3002->setCh1TorqueScale(cmd.ch1_torque_scale);
-            el3002->setCh2TorqueScale(cmd.ch2_torque_scale);
+            elm3002->setCh1TorqueScale(cmd.ch1_torque_scale);
+            elm3002->setCh2TorqueScale(cmd.ch2_torque_scale);
         } catch (const std::exception& e) {
             RCLCPP_WARN_THROTTLE(node->get_logger(), *node->get_clock(), 5000,
                 "Ignoring invalid torque scale value: %s", e.what());
@@ -850,20 +931,20 @@ int main(int argc, char** argv) {
             double ch1_t = 0.0, ch2_t = 0.0;
             auto torque_it = cur_status.by_slave.find(torque_slave);
             if (torque_it != cur_status.by_slave.end() && torque_it->second.has_value()) {
-                const auto& d = std::any_cast<const beckhoff::el3002::Data&>(torque_it->second);
+                const auto& d = std::any_cast<const beckhoff::elm3002::Data&>(torque_it->second);
                 // Apply one-shot zero before reading, then clear flags in shared state.
                 if (cmd.zero_torque_ch1) {
-                    el3002->zeroTorqueCh1(d);
+                    elm3002->zeroTorqueCh1(d);
                     std::lock_guard<std::mutex> lk(g_cmd_mutex);
                     g_cmd_state.zero_torque_ch1 = false;
                 }
                 if (cmd.zero_torque_ch2) {
-                    el3002->zeroTorqueCh2(d);
+                    elm3002->zeroTorqueCh2(d);
                     std::lock_guard<std::mutex> lk(g_cmd_mutex);
                     g_cmd_state.zero_torque_ch2 = false;
                 }
-                ch1_t = static_cast<double>(el3002->scaledTorqueCh1(d));
-                ch2_t = static_cast<double>(el3002->scaledTorqueCh2(d));
+                ch1_t = static_cast<double>(elm3002->scaledTorqueCh1(d));
+                ch2_t = static_cast<double>(elm3002->scaledTorqueCh2(d));
             }
 
             node->publishTelemetry(
@@ -873,6 +954,7 @@ int main(int argc, char** argv) {
                 main_json, dut_json,
                 enc, ch1_t, ch2_t
             );
+            node->publishRtCommand(cmd, testbench.lastMainFgOut(), testbench.lastDutFgOut());
             node->publishBusStatus();
 
             if (debug_print)

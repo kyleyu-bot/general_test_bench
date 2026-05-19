@@ -16,8 +16,8 @@ if str(SRC_ROOT) not in sys.path:
 
 from ethercat_core.loop import EthercatLoop
 from ethercat_core.master import EthercatMaster, al_state_name, load_topology, resolve_slave_position
-from ethercat_core.archive.devices.beckhoff.el3002.adapter import El3002SlaveAdapter
-from ethercat_core.archive.devices.beckhoff.el3002.data_types import El3002Data
+from ethercat_core.archive.devices.beckhoff.elm3002.adapter import Elm3002SlaveAdapter
+from ethercat_core.archive.devices.beckhoff.elm3002.data_types import Elm3002Data
 
 
 def parse_args() -> argparse.Namespace:
@@ -32,7 +32,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--slave",
         default="analog_input_interface",
-        help="Configured EL3002 slave name to observe.",
+        help="Configured ELM3002 slave name to observe.",
     )
     parser.add_argument(
         "--duration-s",
@@ -63,9 +63,9 @@ def main() -> int:
     try:
         runtime = master.initialize()
         adapter = runtime.adapters.get(args.slave)
-        if not isinstance(adapter, El3002SlaveAdapter):
+        if not isinstance(adapter, Elm3002SlaveAdapter):
             raise RuntimeError(
-                f"Slave '{args.slave}' is not an EL3002. Adapter={type(adapter).__name__}"
+                f"Slave '{args.slave}' is not an ELM3002. Adapter={type(adapter).__name__}"
             )
 
         loop = EthercatLoop(runtime, cycle_hz=cfg.cycle_hz)
@@ -100,7 +100,7 @@ def main() -> int:
                 cycle_us = f"{stats.last_cycle_time_ns / 1000:.1f}"
                 if age_ns > stale_threshold_ns:
                     print(f"[STALE {age_ns / 1e6:.1f}ms] al={al} cycle_us={cycle_us} wkc=0 — no fresh frame received")
-                elif not isinstance(data, El3002Data):
+                elif not isinstance(data, Elm3002Data):
                     print(f"al={al} cycle_us={cycle_us} pai_status_1=unavailable  pai_status_2=unavailable")
                 else:
                     ps1 = adapter.get_pai_status_1(data)

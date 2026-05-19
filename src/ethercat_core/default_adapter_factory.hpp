@@ -2,7 +2,7 @@
 
 #include "ethercat_core/master.hpp"
 #include "ethercat_core/devices/beckhoff/el2004/adapter.hpp"
-#include "ethercat_core/devices/beckhoff/el3002/adapter.hpp"
+#include "ethercat_core/devices/beckhoff/elm3002/adapter.hpp"
 #include "ethercat_core/devices/beckhoff/el5032/adapter.hpp"
 #include "ethercat_core/devices/motor_drives/Novanta/Everest/adapter.hpp"
 #include "ethercat_core/devices/motor_drives/Novanta/Volcano/adapter.hpp"
@@ -23,8 +23,8 @@ inline EthercatMaster::AdapterFactory makeDefaultAdapterFactory() {
             return std::make_unique<novanta::volcano::NovantaVolcanoAdapter>(id);
         if (cfg.kind == "EL2004")
             return std::make_unique<beckhoff::el2004::El2004Adapter>(id);
-        if (cfg.kind == "EL3002" || cfg.kind == "ELM3002")
-            return std::make_unique<beckhoff::el3002::El3002Adapter>(id);
+        if (cfg.kind == "ELM3002" || cfg.kind == "ELM3002")
+            return std::make_unique<beckhoff::elm3002::Elm3002Adapter>(id);
         if (cfg.kind == "EL5032")
             return std::make_unique<beckhoff::el5032::El5032Adapter>(id);
 

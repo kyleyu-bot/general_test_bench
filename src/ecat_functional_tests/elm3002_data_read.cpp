@@ -15,8 +15,8 @@
 #include "ethercat_core/loop.hpp"
 #include "ethercat_core/master.hpp"
 #include "ethercat_core/default_adapter_factory.hpp"
-#include "ethercat_core/devices/beckhoff/el3002/adapter.hpp"
-#include "ethercat_core/devices/beckhoff/el3002/data_types.hpp"
+#include "ethercat_core/devices/beckhoff/elm3002/adapter.hpp"
+#include "ethercat_core/devices/beckhoff/elm3002/data_types.hpp"
 
 extern "C" {
 #include "ethercat.h"
@@ -38,7 +38,7 @@ extern "C" {
 #include <thread>
 
 using namespace ethercat_core;
-using namespace ethercat_core::beckhoff::el3002;
+using namespace ethercat_core::beckhoff::elm3002;
 
 // ── Signal handling ───────────────────────────────────────────────────────────
 
@@ -152,7 +152,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    auto* adapter = dynamic_cast<El3002Adapter*>(adapter_it->second.get());
+    auto* adapter = dynamic_cast<Elm3002Adapter*>(adapter_it->second.get());
     if (!adapter) {
         std::fprintf(stderr, "Slave '%s' is not an ELM3002 adapter.\n", args.slave.c_str());
         master.close();
@@ -210,8 +210,8 @@ int main(int argc, char** argv) {
                 );
             } else {
                 const auto& d = std::any_cast<const Data&>(slave_it->second);
-                const float ch1_voltage = El3002Adapter::scaleAdcToVoltage(d.pai_samples_1);
-                const float ch2_voltage = El3002Adapter::scaleAdcToVoltage(d.pai_samples_2);
+                const float ch1_voltage = Elm3002Adapter::scaleAdcToVoltage(d.pai_samples_1);
+                const float ch2_voltage = Elm3002Adapter::scaleAdcToVoltage(d.pai_samples_2);
                 const float ch1_torque  = adapter->scaledTorqueCh1(d);
                 const float ch2_torque  = adapter->scaledTorqueCh2(d);
                 std::printf(

@@ -29,8 +29,8 @@
 #include "ethercat_core/default_adapter_factory.hpp"
 #include "ethercat_core/devices/beckhoff/el2004/adapter.hpp"
 #include "ethercat_core/devices/beckhoff/el2004/data_types.hpp"
-#include "ethercat_core/devices/beckhoff/el3002/adapter.hpp"
-#include "ethercat_core/devices/beckhoff/el3002/data_types.hpp"
+#include "ethercat_core/devices/beckhoff/elm3002/adapter.hpp"
+#include "ethercat_core/devices/beckhoff/elm3002/data_types.hpp"
 #include "ethercat_core/devices/beckhoff/el5032/adapter.hpp"
 #include "ethercat_core/devices/beckhoff/el5032/data_types.hpp"
 #include "ethercat_core/devices/motor_drives/Novanta/Volcano/adapter.hpp"
@@ -280,9 +280,9 @@ int main(int argc, char** argv) {
         }
     }
 
-    auto* el3002 = dynamic_cast<beckhoff::el3002::El3002Adapter*>(
+    auto* elm3002 = dynamic_cast<beckhoff::elm3002::Elm3002Adapter*>(
         rt->adapters.at(args.torque_slave).get());
-    if (!el3002) {
+    if (!elm3002) {
         std::fprintf(stderr, "Slave '%s' is not an ELM3002.\n", args.torque_slave.c_str());
         master.close();
         return 1;
@@ -405,13 +405,13 @@ int main(int argc, char** argv) {
 
             auto torque_it = status.by_slave.find(args.torque_slave);
             if (torque_it != status.by_slave.end() && torque_it->second.has_value()) {
-                const auto& d = std::any_cast<const beckhoff::el3002::Data&>(torque_it->second);
+                const auto& d = std::any_cast<const beckhoff::elm3002::Data&>(torque_it->second);
                 telem.ch1_voltage = static_cast<double>(
-                    beckhoff::el3002::El3002Adapter::scaleAdcToVoltage(d.pai_samples_1));
+                    beckhoff::elm3002::Elm3002Adapter::scaleAdcToVoltage(d.pai_samples_1));
                 telem.ch2_voltage = static_cast<double>(
-                    beckhoff::el3002::El3002Adapter::scaleAdcToVoltage(d.pai_samples_2));
-                telem.ch1_torque  = static_cast<double>(el3002->scaledTorqueCh1(d));
-                telem.ch2_torque  = static_cast<double>(el3002->scaledTorqueCh2(d));
+                    beckhoff::elm3002::Elm3002Adapter::scaleAdcToVoltage(d.pai_samples_2));
+                telem.ch1_torque  = static_cast<double>(elm3002->scaledTorqueCh1(d));
+                telem.ch2_torque  = static_cast<double>(elm3002->scaledTorqueCh2(d));
             }
 
             telem.out1 = ipc_cmd.hold_output1;

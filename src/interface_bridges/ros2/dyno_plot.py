@@ -62,6 +62,7 @@ JSON_TOPICS  = [
     "/dyno/dut/status",
     "/dyno/loop/stats",
     "/dyno/command",
+    "/dyno/rt_command",
     "/dyno/sdo_request",
     "/dyno/sdo_response",
 ]

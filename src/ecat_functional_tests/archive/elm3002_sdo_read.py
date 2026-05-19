@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read Beckhoff EL3002 registers through SDO and optionally sample live PDO data."""
+"""Read Beckhoff ELM3002 registers through SDO and optionally sample live PDO data."""
 
 from __future__ import annotations
 
@@ -23,8 +23,8 @@ from ethercat_core.master import (
     require_pysoem,
     resolve_slave_position,
 )
-from ethercat_core.archive.devices.beckhoff.el3002.adapter import El3002SlaveAdapter
-from ethercat_core.archive.devices.beckhoff.el3002.data_types import EL3002_TX_PDO_FIELDS, El3002Data
+from ethercat_core.archive.devices.beckhoff.elm3002.adapter import Elm3002SlaveAdapter
+from ethercat_core.archive.devices.beckhoff.elm3002.data_types import ELM3002_TX_PDO_FIELDS, Elm3002Data
 
 
 def _parse_cpu_affinity(value: str) -> set[int]:
@@ -44,7 +44,7 @@ def _parse_cpu_affinity(value: str) -> set[int]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Poll a Beckhoff EL3002 register through SDO and optionally print a live PDO field."
+        description="Poll a Beckhoff ELM3002 register through SDO and optionally print a live PDO field."
     )
     parser.add_argument(
         "--topology",
@@ -54,7 +54,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--slave",
         default="analog_input_interface",
-        help="Configured EL3002 slave name to observe.",
+        help="Configured ELM3002 slave name to observe.",
     )
     parser.add_argument(
         "--index",
@@ -125,13 +125,13 @@ def main() -> int:
             break
 
     pdo_field = next(
-        (field for field in EL3002_TX_PDO_FIELDS if field.pdo_index == args.pdo_index),
+        (field for field in ELM3002_TX_PDO_FIELDS if field.pdo_index == args.pdo_index),
         None,
     )
     if pdo_field is None:
-        available = ", ".join(f"0x{field.pdo_index:04X}" for field in EL3002_TX_PDO_FIELDS)
+        available = ", ".join(f"0x{field.pdo_index:04X}" for field in ELM3002_TX_PDO_FIELDS)
         raise ValueError(
-            f"Unsupported EL3002 PDO field 0x{args.pdo_index:04X}. Available: {available}"
+            f"Unsupported ELM3002 PDO field 0x{args.pdo_index:04X}. Available: {available}"
         )
 
     master = EthercatMaster(cfg)
@@ -139,9 +139,9 @@ def main() -> int:
     try:
         runtime = master.initialize()
         adapter = runtime.adapters.get(args.slave)
-        if not isinstance(adapter, El3002SlaveAdapter):
+        if not isinstance(adapter, Elm3002SlaveAdapter):
             raise RuntimeError(
-                f"Slave '{args.slave}' is not an EL3002. Adapter={type(adapter).__name__}"
+                f"Slave '{args.slave}' is not an ELM3002. Adapter={type(adapter).__name__}"
             )
 
         slave = runtime.slaves_by_name[args.slave]
@@ -185,7 +185,7 @@ def main() -> int:
                 status = loop.get_status().by_slave.get(args.slave)
                 pdo_raw_hex = "unavailable"
                 pdo_value = "unavailable"
-                if isinstance(status, El3002Data):
+                if isinstance(status, Elm3002Data):
                     field_end = pdo_field.offset + pdo_field.size
                     if len(status.raw_pdo) >= field_end:
                         pdo_slice = status.raw_pdo[pdo_field.offset:field_end]

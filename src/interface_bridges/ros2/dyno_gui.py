@@ -240,7 +240,7 @@ DS402_MODES = [
 ]
 DS402_DEFAULT_MODE = 9   # Cyclic Sync Velocity
 
-# Allowed torque sensor scale values — must match El3002Adapter::ALLOWED_TORQUE_SCALES
+# Allowed torque sensor scale values — must match Elm3002Adapter::ALLOWED_TORQUE_SCALES
 TORQUE_SCALE_OPTIONS = [20, 200, 500]   # Nm
 CURRENT_COMMAND_FALLBACK_LIMIT_A = 20.0
 
@@ -418,6 +418,7 @@ class DynoCommander(Node):
         self._zero_torque_ch1   = False
         self._zero_torque_ch2   = False
         self._save_log          = False
+        self._script_name       = ""
         self._main_mode    = DS402_DEFAULT_MODE
         self._dut_mode     = DS402_DEFAULT_MODE
 
@@ -442,8 +443,8 @@ class DynoCommander(Node):
         # Scales are mirrored from set_command() so scripts can query them.
         self._ch1_torque_nm: float = 0.0
         self._ch2_torque_nm: float = 0.0
-        self._ch1_scale_nm:  float = 200.0   # default, matches El3002Adapter ch1
-        self._ch2_scale_nm:  float = 20.0    # default, matches El3002Adapter ch2
+        self._ch1_scale_nm:  float = 200.0   # default, matches Elm3002Adapter ch1
+        self._ch2_scale_nm:  float = 20.0    # default, matches Elm3002Adapter ch2
 
         # Output-side encoder position (rad, post gear-ratio) from drive status JSON.
         self._main_output_pos_rad: float = 0.0
@@ -464,7 +465,8 @@ class DynoCommander(Node):
 
         # SDO request/response
         self._sdo_pub = self.create_publisher(StringMsg, "/dyno/sdo_request", 10)
-        self._pending_sdo_response = None   # written by ROS thread, read by Qt timer
+        self._pending_sdo_response = None        # written by ROS thread, read by Qt timer
+        self._sdo_one_shot_callbacks: list = []  # list of (index, subindex, callback)
         self.create_subscription(StringMsg, "/dyno/sdo_response",
             self._on_sdo_response, 10)
 
@@ -662,6 +664,10 @@ class DynoCommander(Node):
         with self._lock:
             self._save_log = True
 
+    def set_script_name(self, name: str) -> None:
+        with self._lock:
+            self._script_name = name
+
     def request_sdo(self, drive: str, op: str,
                     index: int, subindex: int, size: int, value: int = 0) -> None:
         payload = {
@@ -690,12 +696,32 @@ class DynoCommander(Node):
             return
         with self._limits_lock:
             self._pending_sdo_response = data
+            try:
+                resp_index = int(data.get("index", "0"), 16)
+            except (ValueError, TypeError):
+                resp_index = -1
+            resp_sub = int(data.get("subindex", -1))
+            matched   = []
+            remaining = []
+            for idx, sub, cb in self._sdo_one_shot_callbacks:
+                if idx == resp_index and sub == resp_sub:
+                    matched.append(cb)
+                else:
+                    remaining.append((idx, sub, cb))
+            self._sdo_one_shot_callbacks = remaining
+        for cb in matched:
+            cb(data)
 
     def pop_sdo_response(self):
         with self._limits_lock:
             data = self._pending_sdo_response
             self._pending_sdo_response = None
             return data
+
+    def register_sdo_one_shot(self, index: int, subindex: int, callback) -> None:
+        """Register a callback invoked when an SDO response for (index, subindex) arrives."""
+        with self._limits_lock:
+            self._sdo_one_shot_callbacks.append((index, subindex, callback))
 
     def _publish(self):
         with self._lock:
@@ -711,6 +737,7 @@ class DynoCommander(Node):
             payload["zero_torque_ch1"]   = self._zero_torque_ch1
             payload["zero_torque_ch2"]   = self._zero_torque_ch2
             payload["save_log"]          = self._save_log
+            payload["script_name"]       = self._script_name
             self._fault_reset          = False   # one-shot pulses
             self._zero_torque_ch1      = False
             self._zero_torque_ch2      = False
@@ -1203,6 +1230,18 @@ class ScriptingPanel(QGroupBox):
         self._current_mod      = None
         self._on_script_active = on_script_active  # callable(bool) | None
         self._get_modes        = get_modes          # callable() → (main_mode, dut_mode) | None
+        self._sdo_auto_pending: list = []   # [(param_name, val)] written by ROS thread
+        self._sdo_auto_read_ok: set = set() # params successfully populated
+
+        # Drain _sdo_auto_pending in the Qt main thread
+        self._sdo_drain_timer = QTimer(self)
+        self._sdo_drain_timer.timeout.connect(self._drain_sdo_auto_pending)
+        self._sdo_drain_timer.start(50)
+
+        # Retry SDO auto-reads every 3 s until all params are populated
+        self._sdo_retry_timer = QTimer(self)
+        self._sdo_retry_timer.timeout.connect(self._retry_sdo_auto_reads)
+        self._sdo_retry_timer.start(3000)
 
         # ── Script selector ───────────────────────────────────────────────────
         self._script_combo = QComboBox()
@@ -1270,6 +1309,13 @@ class ScriptingPanel(QGroupBox):
         btn_row.addWidget(self._run_btn)
         btn_row.addWidget(self._abort_btn)
 
+        # ── Actuator serial number ────────────────────────────────────────────
+        self._serial_number_edit = QLineEdit()
+        self._serial_number_edit.setPlaceholderText("Enter serial number…")
+        sn_row = QHBoxLayout()
+        sn_row.addWidget(QLabel("Actuator S/N:"))
+        sn_row.addWidget(self._serial_number_edit)
+
         # ── Output log ────────────────────────────────────────────────────────
         self._log = QTextEdit()
         self._log.setReadOnly(True)
@@ -1284,6 +1330,7 @@ class ScriptingPanel(QGroupBox):
         lay.addWidget(self._params_scroll)
         lay.addLayout(timing_row)
         lay.addLayout(btn_row)
+        lay.addLayout(sn_row)
         lay.addWidget(QLabel("Output:"))
         lay.addWidget(self._log, 1)
 
@@ -1310,6 +1357,7 @@ class ScriptingPanel(QGroupBox):
     def _on_script_selected(self, idx: int):
         path = self._script_combo.itemData(idx)
         self._current_mod = None
+        self._sdo_auto_read_ok.clear()
         self._clear_params()
         if not path:
             return
@@ -1318,8 +1366,69 @@ class ScriptingPanel(QGroupBox):
             self._current_mod = mod
             params = getattr(mod, "PARAMS", {})
             self._build_params(params)
+            self._trigger_sdo_auto_reads()
+            # Re-trigger SDO reads when the drive dropdown changes
+            auto_reads = getattr(mod, "SDO_AUTO_READS", {})
+            for spec in auto_reads.values():
+                drive_param = spec.get("drive_param")
+                if drive_param and drive_param in self._param_widgets:
+                    w = self._param_widgets[drive_param]
+                    if isinstance(w, QComboBox):
+                        w.currentTextChanged.connect(
+                            lambda _t, m=mod: self._trigger_sdo_auto_reads(m))
         except Exception as e:
             self._log_line(f"[load error] {e}")
+
+    def _trigger_sdo_auto_reads(self, mod=None):
+        if mod is None:
+            mod = self._current_mod
+        if mod is None:
+            return
+        auto_reads = getattr(mod, "SDO_AUTO_READS", {})
+        for param_name, spec in auto_reads.items():
+            if param_name not in self._param_widgets:
+                continue
+            drive = "main"
+            drive_param = spec.get("drive_param")
+            if drive_param and drive_param in self._param_widgets:
+                w = self._param_widgets[drive_param]
+                if isinstance(w, QComboBox):
+                    drive = w.currentText()
+
+            def _on_response(resp, pname=param_name, s=spec, m=mod):
+                if self._current_mod is not m:
+                    return
+                if not (resp.get("op") == "read" and resp.get("success", False)):
+                    return
+                raw = int(resp.get("value", 0))
+                transform = s.get("transform")
+                val = int(transform(raw)) if transform else raw
+                self._sdo_auto_pending.append((pname, val))  # GIL-safe append
+
+            self._commander.register_sdo_one_shot(
+                spec["index"], spec["subindex"], _on_response)
+            self._commander.request_sdo(
+                drive, "read", spec["index"], spec["subindex"], spec["size"])
+
+    def _drain_sdo_auto_pending(self):
+        while self._sdo_auto_pending:
+            pname, val = self._sdo_auto_pending.pop(0)
+            w = self._param_widgets.get(pname)
+            if w and isinstance(w, QSpinBox):
+                w.setValue(val)
+                self._sdo_auto_read_ok.add(pname)
+
+    def _retry_sdo_auto_reads(self):
+        mod = self._current_mod
+        if mod is None:
+            return
+        auto_reads = getattr(mod, "SDO_AUTO_READS", {})
+        if not auto_reads:
+            return
+        # Only retry params that haven't been successfully populated yet
+        pending = [p for p in auto_reads if p not in self._sdo_auto_read_ok]
+        if pending:
+            self._trigger_sdo_auto_reads(mod)
 
     # ── Parameter form ────────────────────────────────────────────────────────
 
@@ -1359,6 +1468,46 @@ class ScriptingPanel(QGroupBox):
                 result[name] = w.value()
         return result
 
+    # ── Serial number file ────────────────────────────────────────────────────
+
+    def _write_sn_file(self, script_stem: str, sn: str):
+        """Write actuator_serial_number.txt into the test log directory.
+
+        The bridge creates the directory asynchronously after pulse_save_log(),
+        so we retry every 200 ms until it appears (up to ~3 s total).
+        """
+        if not sn:
+            return
+        import glob, datetime, re, pwd as _pwd
+        repo_root  = os.path.abspath(
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../.."))
+        date_str   = datetime.date.today().strftime("%Y-%m-%d")
+        safe_stem  = re.sub(r"[^a-zA-Z0-9]+", "_", script_stem).rstrip("_")
+        pattern    = os.path.join(repo_root, "test_data_log", date_str,
+                                  f"*_{safe_stem}")
+        attempts   = [0]
+
+        def _try_write():
+            dirs = sorted(glob.glob(pattern))
+            if not dirs:
+                attempts[0] += 1
+                if attempts[0] < 15:   # give up after ~3 s
+                    QTimer.singleShot(200, _try_write)
+                return
+            path = os.path.join(dirs[-1], "actuator_serial_number.txt")
+            try:
+                with open(path, "w") as f:
+                    f.write(f'actuator_serial_number = "{sn}"\n')
+                sudo_user = (os.environ.get("DYNO_ORIGINAL_USER")
+                             or os.environ.get("SUDO_USER", ""))
+                if sudo_user and sudo_user != "root":
+                    pw = _pwd.getpwnam(sudo_user)
+                    os.chown(path, pw.pw_uid, pw.pw_gid)
+            except Exception as exc:
+                print(f"[TestScriptPanel] serial number file write failed: {exc}")
+
+        QTimer.singleShot(300, _try_write)
+
     # ── Run / abort ───────────────────────────────────────────────────────────
 
     def _run_script(self):
@@ -1376,6 +1525,11 @@ class ScriptingPanel(QGroupBox):
         # Pause GUI push — script now has exclusive control of set_command()
         if self._on_script_active:
             self._on_script_active(True)
+
+        script_stem = os.path.splitext(self._script_combo.currentText())[0]
+        self._commander.set_script_name(script_stem)
+        self._commander.pulse_save_log()
+        self._write_sn_file(script_stem, self._serial_number_edit.text().strip())
 
         params = self._collect_params()
         self._log.clear()
@@ -1438,9 +1592,53 @@ class ScriptingPanel(QGroupBox):
                 self._on_script_active(False)
             self._run_btn.setEnabled(True)
             self._abort_btn.setEnabled(False)
+            # End the named log window — runs here (not in _on_script_done) because
+            # QTimer.singleShot from a background thread is not reliable.
+            self._commander.set_script_name("")
+            self._commander.pulse_save_log()
+            threading.Thread(target=self._convert_recent_logs, daemon=True).start()
+
+    def _convert_recent_logs(self) -> None:
+        """Convert recently-closed .csv.gz logs to Parquet for fast column access."""
+        import time, pwd as _pwd
+        from pathlib import Path
+        time.sleep(5)   # wait for bridge drain thread to close and flush the file
+        try:
+            import pandas as pd
+            import pyarrow  # noqa: F401
+        except ImportError as exc:
+            self._log_line(f"[Parquet] Skipped (pip install pyarrow): {exc}")
+            return
+        repo_root = os.path.abspath(
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../.."))
+        log_root  = Path(repo_root) / "test_data_log"
+        cutoff    = time.time() - 120   # only files closed in the last 2 minutes
+        sudo_user = (os.environ.get("DYNO_ORIGINAL_USER")
+                     or os.environ.get("SUDO_USER", ""))
+        for gz in sorted(log_root.glob("*/*/*.csv.gz")):
+            pq_path = gz.parent / "dyno_pdo.parquet"
+            try:
+                mtime = gz.stat().st_mtime
+            except OSError:
+                continue
+            if pq_path.exists() or mtime <= cutoff:
+                continue
+            try:
+                self._log_line(f"[Parquet] Converting {gz.parent.name}…")
+                df = pd.read_csv(str(gz))
+                df.to_parquet(str(pq_path), index=False, compression="snappy")
+                if sudo_user and sudo_user != "root":
+                    try:
+                        pw = _pwd.getpwnam(sudo_user)
+                        os.chown(str(pq_path), pw.pw_uid, pw.pw_gid)
+                    except Exception:
+                        pass
+                self._log_line("[Parquet] Done")
+            except Exception as exc:
+                self._log_line(f"[Parquet] Error: {exc}")
 
     def _on_script_done(self, success: bool, msg: str):
-        """Log-only — UI state is managed by _poll_thread_done."""
+        """Log result message — UI state and log rotation handled by _poll_thread_done."""
         status = "OK" if success else "ERROR"
         self._log_line(f"[{status}] {msg.strip()}")
 
@@ -1472,8 +1670,8 @@ class DynoWindow(QMainWindow):
         self._dut_enabled    = False
         self._hold_output1   = False
         self._script_running = False
-        self._ch1_scale: int = 200   # Nm — matches El3002Adapter ch1 default
-        self._ch2_scale: int = 20    # Nm — matches El3002Adapter ch2 default
+        self._ch1_scale: int = 200   # Nm — matches Elm3002Adapter ch1 default
+        self._ch2_scale: int = 20    # Nm — matches Elm3002Adapter ch2 default
 
         def _fg_default():
             return {"enable": False, "waveform": 0, "control_type": 0,
@@ -2095,7 +2293,7 @@ class DynoWindow(QMainWindow):
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
-        splitter.setFixedHeight(max(200, _content_h - 15))
+        splitter.setFixedHeight(max(200, _content_h - 15 + 32))
 
         # ── Bottom status / bridge row ────────────────────────────────────────
         status_row = QWidget()
@@ -2127,6 +2325,186 @@ class DynoWindow(QMainWindow):
                        self._bridge_restart_btn):
                 _b.setEnabled(False)
                 _b.setToolTip("Bridge not managed by GUI")
+
+        # ── Post-processing buttons (left-aligned with _script_panel) ─────────
+        def _launch(cmd):
+            subprocess.Popen(cmd, start_new_session=True,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        def _launch_as_user(cmd):
+            sudo_user = os.environ.get("SUDO_USER")
+            if sudo_user:
+                cmd = ["sudo", "-u", sudo_user, "-H",
+                       "--preserve-env=DISPLAY,XAUTHORITY"] + cmd
+            subprocess.Popen(cmd, start_new_session=True,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        def _launch_as_user_ros2(script_path):
+            """Launch a Python script that requires ROS2, sourcing the ROS2 env first."""
+            bash_cmd = f'source /opt/ros/humble/setup.bash && python3 "{script_path}"'
+            sudo_user = os.environ.get("SUDO_USER")
+            if sudo_user:
+                cmd = ["sudo", "-u", sudo_user, "-H",
+                       "--preserve-env=DISPLAY,XAUTHORITY",
+                       "bash", "-c", bash_cmd]
+            else:
+                cmd = ["bash", "-c", bash_cmd]
+            subprocess.Popen(cmd, start_new_session=True,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        repo = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
+
+        btn_plot = QPushButton("Live Plot")
+        btn_plot.clicked.connect(lambda: _launch(
+            ["bash", os.path.join(repo, "src/interface_bridges/ros2/run_plot.sh")]))
+
+        btn_encoder = QPushButton("Encoder Linearization")
+        btn_encoder.clicked.connect(lambda: _launch_as_user(
+            ["python3", os.path.join(repo,
+             "src/tools/post_processing/encoder_linearization/dyno_encoder_linearization_gui.py")]))
+
+        btn_enc_comp = QPushButton("Enc Comp Write")
+        btn_enc_comp.clicked.connect(lambda: _launch_as_user_ros2(
+            os.path.join(repo,
+             "src/tools/post_processing/encoder_linearization/dyno_encoder_comp_write_gui.py")))
+
+        plot_btn_w = max(btn_plot.sizeHint().width(), btn_encoder.sizeHint().width())
+        btn_plot.setFixedWidth(plot_btn_w)
+        btn_encoder.setFixedWidth(plot_btn_w)
+
+        btn_log = QPushButton("Log Viewer")
+        btn_log.clicked.connect(lambda: _launch(
+            ["python3", os.path.join(repo, "src/tools/dyno_log_viewer.py")]))
+
+        btn_bode = QPushButton("Bode Plot")
+        btn_bode.clicked.connect(lambda: _launch_as_user(
+            ["python3", os.path.join(repo,
+             "src/tools/post_processing/bode_plot/dyno_bode_gui.py")]))
+
+        btn_kt = QPushButton("Kt Plot")
+        btn_kt.clicked.connect(lambda: _launch_as_user(
+            ["python3", os.path.join(repo,
+             "src/tools/post_processing/kt_plot/dyno_kt_gui.py")]))
+
+        btn_cogging = QPushButton("Cogging")
+        btn_cogging.clicked.connect(lambda: _launch_as_user(
+            ["python3", os.path.join(repo,
+             "src/tools/post_processing/cogging_compensation_analysis/dyno_cogging_gui.py")]))
+
+        # ── Google Drive sync ─────────────────────────────────────────────────
+        _upload_proc = [None]   # mutable box: subprocess.Popen or None
+
+        _sync_label = QLabel("Not synced")
+        _sync_label.setStyleSheet("color: grey; font-size: 10px;")
+
+        _poll_timer = QTimer()
+
+        def _poll_upload():
+            proc = _upload_proc[0]
+            if proc is None or proc.poll() is not None:
+                _poll_timer.stop()
+                if proc is not None:
+                    from datetime import datetime
+                    ts = datetime.now().strftime("%H:%M")
+                    if proc.returncode == 0:
+                        _sync_label.setText(f"Synced {ts}")
+                        _sync_label.setStyleSheet("color: grey; font-size: 10px;")
+                    else:
+                        _sync_label.setText(f"Sync failed {ts}")
+                        _sync_label.setStyleSheet("color: red; font-size: 10px;")
+
+        _poll_timer.timeout.connect(_poll_upload)
+
+        def _sync_to_drive():
+            if _upload_proc[0] is not None and _upload_proc[0].poll() is None:
+                return   # already running
+            src = os.path.join(repo, "actuator_test_log")
+            if not os.path.isdir(src):
+                _sync_label.setText("No actuator_test_log")
+                _sync_label.setStyleSheet("color: red; font-size: 10px;")
+                return
+            sudo_user = (os.environ.get("SUDO_USER")
+                         or os.environ.get("DYNO_ORIGINAL_USER"))
+            # rclone copy: upload new/changed files only, never delete destination
+            cmd = ["rclone", "copy", src, "foundation_gdrive_hw_actuator:actuator_test_log",
+                   "--transfers=4", "--checkers=8"]
+            if sudo_user:
+                cmd = ["sudo", "-u", sudo_user, "-H"] + cmd
+            try:
+                _upload_proc[0] = subprocess.Popen(
+                    cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    start_new_session=True)
+                _sync_label.setText("Syncing…")
+                _sync_label.setStyleSheet("color: orange; font-size: 10px;")
+                _poll_timer.start(2000)
+            except OSError:
+                _sync_label.setText("rclone not found")
+                _sync_label.setStyleSheet("color: red; font-size: 10px;")
+
+        _auto_check = QCheckBox("Auto")
+        _auto_check.setToolTip("Automatically sync to Google Drive on a timer")
+
+        _auto_spin = QSpinBox()
+        _auto_spin.setRange(1, 24)
+        _auto_spin.setValue(2)
+        _auto_spin.setSuffix(" h")
+        _auto_spin.setFixedWidth(58)
+        _auto_spin.setToolTip("Auto-sync interval in hours")
+
+        _auto_timer = QTimer()
+        _auto_timer.timeout.connect(_sync_to_drive)
+
+        def _update_auto_timer(checked):
+            if checked:
+                _sync_to_drive()   # immediate sync on enable
+                _auto_timer.start(_auto_spin.value() * 3_600_000)
+            else:
+                _auto_timer.stop()
+
+        _auto_check.toggled.connect(_update_auto_timer)
+        _auto_spin.valueChanged.connect(
+            lambda v: _auto_timer.start(v * 3_600_000) if _auto_check.isChecked() else None)
+
+        btn_sync = QPushButton("Sync to Drive")
+        btn_sync.clicked.connect(_sync_to_drive)
+
+        # Two-row post-processing area.  The top row aligns Live Plot with the
+        # other tool buttons; Encoder Linearization sits directly underneath.
+        # The left spacer matches btn_w (200 px) + right_lay spacing (6 px).
+        pp_row     = QWidget()
+        pp_row_lay = QVBoxLayout(pp_row)
+        pp_row_lay.setContentsMargins(0, 14, 0, 2)
+        pp_row_lay.setSpacing(4)
+
+        pp_top     = QWidget()
+        pp_top_lay = QHBoxLayout(pp_top)
+        pp_top_lay.setContentsMargins(0, 0, 0, 0)
+        pp_top_lay.setSpacing(6)
+        pp_spacer_top = QWidget()
+        pp_spacer_top.setFixedWidth(206)
+        pp_top_lay.addWidget(pp_spacer_top)
+        pp_top_lay.addWidget(btn_plot)
+        for btn in (btn_log, btn_bode, btn_kt, btn_cogging, btn_sync):
+            pp_top_lay.addWidget(btn)
+        pp_top_lay.addWidget(_sync_label)
+        pp_top_lay.addWidget(_auto_check)
+        pp_top_lay.addWidget(_auto_spin)
+        pp_top_lay.addStretch(1)
+
+        pp_bottom     = QWidget()
+        pp_bottom_lay = QHBoxLayout(pp_bottom)
+        pp_bottom_lay.setContentsMargins(0, 0, 0, 0)
+        pp_bottom_lay.setSpacing(6)
+        pp_spacer_bottom = QWidget()
+        pp_spacer_bottom.setFixedWidth(206)
+        pp_bottom_lay.addWidget(pp_spacer_bottom)
+        pp_bottom_lay.addWidget(btn_encoder)
+        pp_bottom_lay.addWidget(btn_enc_comp)
+        pp_bottom_lay.addStretch(1)
+
+        pp_row_lay.addWidget(pp_top)
+        pp_row_lay.addWidget(pp_bottom)
+        right_outer.insertWidget(1, pp_row)  # between right_inner and stretch
 
         # ── Central widget ─────────────────────────────────────────────────────
         central = QWidget()
@@ -2606,7 +2984,14 @@ def launch_bridge(bridge_path: str, topology: str, fault_reset_s: float,
     if debug:
         cmd += ["-p", "debug:=1"]
     print(f"[dyno_gui] Launching: {' '.join(cmd)}")
-    proc = subprocess.Popen(cmd)
+    # sudo -E overwrites SUDO_USER with the invoking user (root here, since the
+    # GUI itself runs as root via sudo).  Preserve the original user in a custom
+    # variable that sudo does not touch, so chown_to_sudo_user() in the bridge
+    # can find the real unprivileged user.
+    env = os.environ.copy()
+    if "SUDO_USER" in env:
+        env.setdefault("DYNO_ORIGINAL_USER", env["SUDO_USER"])
+    proc = subprocess.Popen(cmd, env=env)
     return proc
 
 

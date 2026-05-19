@@ -18,7 +18,7 @@ except ImportError:  # pragma: no cover - depends on host environment.
 from .data_types import EthercatAlStates
 from .devices.base import SdoReadSpec, SlaveAdapter, SlaveIdentity
 from .devices.beckhoff.el2004.adapter import El2004SlaveAdapter
-from .devices.beckhoff.el3002.adapter import El3002SlaveAdapter
+from .devices.beckhoff.elm3002.adapter import Elm3002SlaveAdapter
 from .devices.beckhoff.el5032.adapter import El5032SlaveAdapter
 from .devices.motor_drives.Novanta.Everest.adapter import NovantaEverestSlaveAdapter
 from .devices.motor_drives.Novanta.Everest.pdo import PdoScaling as EverestPdoScaling
@@ -144,8 +144,8 @@ def _build_adapter(cfg: SlaveConfig) -> SlaveAdapter[Any, Any]:
         return NovantaVolcanoSlaveAdapter(identity=identity, scaling=scaling)
     if cfg.kind == "EL2004":
         return El2004SlaveAdapter(identity=identity)
-    if cfg.kind in ("EL3002", "ELM3002"):
-        return El3002SlaveAdapter(identity=identity)
+    if cfg.kind in ("ELM3002", "ELM3002"):
+        return Elm3002SlaveAdapter(identity=identity)
     if cfg.kind == "EL5032":
         return El5032SlaveAdapter(identity=identity)
 

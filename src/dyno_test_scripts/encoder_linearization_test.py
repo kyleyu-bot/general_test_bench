@@ -1,10 +1,10 @@
 """
 Encoder linearization test.
 
-Runs the selected drive at a constant input-side speed and monitors the
-output-side encoder position (post gear-ratio) via ROS2.  The test stops
-once the output shaft has accumulated the target number of revolutions, or
-when the safety timeout expires.
+Runs the selected drive at a constant input-side speed in both directions and
+monitors the output-side encoder position (post gear-ratio) via ROS2.  Each leg
+stops once the output shaft has accumulated the target number of revolutions,
+or when the safety timeout expires.
 
 Speed conversion:
     velocity_rad_s = input_speed_rev_s × 2π
@@ -18,11 +18,13 @@ Parameters
 drive : str
     Which drive to command: "main" or "dut".
 input_speed_rev_s : float
-    Input-side rotation speed (rev/s). Default 1.0.
+    Input-side rotation speed magnitude (rev/s). Default 1.0.
 target_output_revs : float
-    Number of output-side revolutions to accumulate before stopping. Default 4.0.
+    Number of output-side revolutions to accumulate in each direction before
+    stopping. Default 4.0.
 timeout_s : float
-    Safety timeout (s) — exits early if the target is not reached. Default 300.
+    Per-direction safety timeout (s) — exits early if the target is not reached.
+    Default 300.
 
 Framework contract (pre/post):
     Before run() — framework enables both drives and applies GUI modes.
@@ -32,6 +34,39 @@ Framework contract (pre/post):
 
 import math
 import time
+
+
+def _post_process(script_file: str, drive: str) -> None:
+    """Find this test's log folder and run encoder linearization analysis. Called in a daemon thread."""
+    import time as _time, sys as _sys, os as _os
+    from pathlib import Path
+
+    _time.sleep(3)  # wait for bridge log rotation to close the CSV
+
+    stem      = Path(script_file).stem
+    repo_root = Path(script_file).resolve().parents[2]
+    log_root  = repo_root / "test_data_log"
+    now       = _time.time()
+    candidates = [
+        p for p in log_root.glob(f"*/*_{stem}")
+        if p.is_dir() and now - p.stat().st_mtime < 600
+    ]
+    if not candidates:
+        return
+    log_folder = max(candidates, key=lambda p: p.stat().st_mtime)
+
+    enc_dir = _os.path.join(_os.path.dirname(script_file),
+                            "../tools/post_processing/encoder_linearization")
+    if enc_dir not in _sys.path:
+        _sys.path.insert(0, enc_dir)
+    import importlib
+    import dyno_encoder_linearization_analysis as _mod
+    importlib.reload(_mod)
+    try:
+        _mod.run_encoder_linearization_analysis(str(log_folder), drive=drive)
+    except Exception:
+        pass  # silent — test already finished, don't surface errors to user
+
 
 PARAMS = {
     "drive":               ["main", "dut"],
@@ -46,7 +81,7 @@ CSV = 9   # DS402 Cyclic Synchronous Velocity
 def run(params: dict, commander, stop_event):
     drive       = params["drive"]
     is_main     = (drive == "main")
-    speed_rev_s = float(params["input_speed_rev_s"])
+    speed_rev_s = abs(float(params["input_speed_rev_s"]))
     target_revs = float(params["target_output_revs"])
     timeout_s   = float(params["timeout_s"])
     vel_key     = "main_velocity" if is_main else "dut_velocity"
@@ -63,19 +98,26 @@ def run(params: dict, commander, stop_event):
             dut_mode    = CSV if not is_main else 0,
         )
 
-    # Capture output position before starting motion.
-    start_pos_rad = commander.get_output_pos_rad(drive)
+    def _run_leg(vel: float) -> bool:
+        start_pos_rad = commander.get_output_pos_rad(drive)
+        _send(vel)
 
-    _send(vel_rad_s)
+        t0 = time.monotonic()
+        while not stop_event.is_set():
+            if time.monotonic() - t0 >= timeout_s:
+                return False
+            delta = abs(commander.get_output_pos_rad(drive) - start_pos_rad)
+            if delta >= target_rad:
+                return True
+            time.sleep(0.02)
+        return False
 
-    t0 = time.monotonic()
-    while not stop_event.is_set():
-        if time.monotonic() - t0 >= timeout_s:
+    for direction in (1.0, -1.0):
+        reached_target = _run_leg(direction * vel_rad_s)
+        _send(0.0)
+        time.sleep(0.25)
+        if stop_event.is_set() or not reached_target:
             break
-        delta = abs(commander.get_output_pos_rad(drive) - start_pos_rad)
-        if delta >= target_rad:
-            break
-        time.sleep(0.02)
 
     # Zero and disable — framework epilogue also does this.
     commander.set_command(
@@ -85,3 +127,11 @@ def run(params: dict, commander, stop_event):
         main_mode   = 0,
         dut_mode    = 0,
     )
+
+    if not stop_event.is_set():
+        import threading
+        threading.Thread(
+            target=_post_process,
+            args=(__file__, params["drive"]),
+            daemon=True,
+        ).start()

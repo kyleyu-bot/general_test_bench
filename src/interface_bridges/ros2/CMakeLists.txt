@@ -68,6 +68,7 @@ target_link_libraries(bridge_ros2
     quill::quill
     pthread
     rt
+    z
 )
 
 target_compile_options(bridge_ros2 PRIVATE -Wall -Wextra)

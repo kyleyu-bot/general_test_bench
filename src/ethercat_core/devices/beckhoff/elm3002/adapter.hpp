@@ -1,16 +1,16 @@
 #pragma once
 
 #include "ethercat_core/devices/base.hpp"
-#include "ethercat_core/devices/beckhoff/el3002/data_types.hpp"
+#include "ethercat_core/devices/beckhoff/elm3002/data_types.hpp"
 
-namespace ethercat_core::beckhoff::el3002 {
+namespace ethercat_core::beckhoff::elm3002 {
 
 // Allowed torque scale values for ADC-to-torque conversion.
 static constexpr float ALLOWED_TORQUE_SCALES[] = {20.0f, 200.0f, 500.0f};
 
-class El3002Adapter : public ISlaveAdapter {
+class Elm3002Adapter : public ISlaveAdapter {
 public:
-    explicit El3002Adapter(
+    explicit Elm3002Adapter(
         SlaveIdentity id,
         float         ch1_torque_scale = 200.0f,
         float         ch2_torque_scale = 20.0f
@@ -55,4 +55,4 @@ private:
     static float validateTorqueScale(float s);
 };
 
-} // namespace ethercat_core::beckhoff::el3002
+} // namespace ethercat_core::beckhoff::elm3002

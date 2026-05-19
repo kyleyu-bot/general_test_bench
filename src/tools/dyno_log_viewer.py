@@ -27,10 +27,10 @@ try:
     from PyQt5.QtWidgets import (
         QApplication, QMainWindow, QWidget,
         QVBoxLayout, QHBoxLayout, QGridLayout, QSplitter,
-        QLabel, QComboBox, QPushButton, QSpinBox, QLineEdit,
+        QLabel, QComboBox, QPushButton, QSpinBox, QDoubleSpinBox, QLineEdit,
         QListWidget, QListWidgetItem, QGroupBox,
         QMenu, QAction, QFileDialog, QSizePolicy, QMessageBox,
-        QFrame, QScrollArea,
+        QFrame, QScrollArea, QStackedWidget,
     )
 except ImportError:
     print("ERROR: PyQt5 not found.  pip install PyQt5", file=sys.stderr)
@@ -100,14 +100,27 @@ class PlotCell(pg.PlotWidget):
         self._curves:    list[dict] = []   # {field, item}
         self._color_idx: int        = 0
         self._df:        "pd.DataFrame | None" = None
+        self._data_fn:   "callable | None"     = None  # (field)->( t_s, y) for Parquet mode
 
         self.setAcceptDrops(True)
         self.addLegend(offset=(5, 5))
         self.showGrid(x=True, y=True, alpha=0.3)
         self.setLabel("bottom", "time (s)")
         self.setMinimumSize(220, 160)
+        self.setClipToView(True)
+        self.setDownsampling(auto=True, mode="peak")
+
+    def set_data_fn(self, fn: "callable | None") -> None:
+        """Switch to lazy Parquet mode. fn(field) -> (t_s_array, y_array) | None."""
+        self._data_fn = fn
+        self._df = None
+        fields = [c["field"] for c in self._curves]
+        self._clear()
+        for f in fields:
+            self._add_curve(f)
 
     def set_dataframe(self, df: "pd.DataFrame") -> None:
+        self._data_fn = None
         self._df = df
         # Refresh existing curves with new data.
         fields = [c["field"] for c in self._curves]
@@ -121,19 +134,22 @@ class PlotCell(pg.PlotWidget):
         return (t - t[0]) * 1e-9   # ns → seconds, relative to start
 
     def _add_curve(self, field: str) -> None:
-        if self._df is None or field not in self._df.columns:
-            return
         for c in self._curves:
             if c["field"] == field:
                 return  # already present
+        if self._data_fn is not None:
+            result = self._data_fn(field)
+            if result is None:
+                return
+            t_s, y = result
+        elif self._df is not None and field in self._df.columns:
+            t_s = self._x()
+            y   = self._df[field].to_numpy(dtype=np.float64)
+        else:
+            return
         color = CURVE_COLORS[self._color_idx % len(CURVE_COLORS)]
         self._color_idx += 1
-        item = self.plot(
-            self._x(),
-            self._df[field].to_numpy(dtype=np.float64),
-            name=field,
-            pen=pg.mkPen(color, width=1.5),
-        )
+        item = self.plot(t_s, y, name=field, pen=pg.mkPen(color, width=1.5))
         self._curves.append({"field": field, "item": item})
 
     def _remove_curve(self, idx: int) -> None:
@@ -180,8 +196,9 @@ class PlotGrid(QWidget):
         super().__init__(parent)
         self._layout = QGridLayout(self)
         self._layout.setSpacing(4)
-        self._cells: list[list[PlotCell]] = []
-        self._df: "pd.DataFrame | None" = None
+        self._cells:   list[list[PlotCell]] = []
+        self._df:      "pd.DataFrame | None" = None
+        self._data_fn: "callable | None"     = None
         self._set_dims(2, 2)
 
     def _set_dims(self, rows: int, cols: int) -> None:
@@ -194,7 +211,9 @@ class PlotGrid(QWidget):
             row_cells = []
             for c in range(cols):
                 cell = PlotCell(self)
-                if self._df is not None:
+                if self._data_fn is not None:
+                    cell.set_data_fn(self._data_fn)
+                elif self._df is not None:
                     cell.set_dataframe(self._df)
                 self._layout.addWidget(cell, r, c)
                 row_cells.append(cell)
@@ -203,7 +222,14 @@ class PlotGrid(QWidget):
     def set_dims(self, rows: int, cols: int) -> None:
         self._set_dims(rows, cols)
 
+    def set_data_fn(self, fn: "callable | None") -> None:
+        self._data_fn = fn
+        self._df = None
+        for cell in self.all_cells():
+            cell.set_data_fn(fn)
+
     def set_dataframe(self, df: "pd.DataFrame") -> None:
+        self._data_fn = None
         self._df = df
         for row in self._cells:
             for cell in row:
@@ -358,8 +384,13 @@ class DisplayPanel(QWidget):
 class DynoLogViewer(QMainWindow):
     def __init__(self, log_dir: str):
         super().__init__()
-        self._log_dir = os.path.abspath(log_dir)
+        self._log_dir      = os.path.abspath(log_dir)
         self._df: "pd.DataFrame | None" = None
+        self._current_path: str = ""
+        self._parquet_path:   str = ""
+        self._t_ns_cache:     "np.ndarray | None" = None
+        self._col_cache:      "dict[str, np.ndarray]" = {}
+        self._parquet_timer:  "QTimer | None" = None   # polls for Parquet while converting
         self.setWindowTitle("Dyno PDO Log Viewer")
         self.resize(1400, 800)
         pg.setConfigOptions(antialias=False, useNumba=False)
@@ -403,6 +434,25 @@ class DynoLogViewer(QMainWindow):
         refresh_btn.setFixedWidth(70)
         refresh_btn.clicked.connect(self._refresh_file_list)
         tlay.addWidget(refresh_btn)
+
+        tlay.addWidget(_vline())
+
+        tlay.addWidget(QLabel("Start(s):"))
+        self._start_spin = QDoubleSpinBox()
+        self._start_spin.setRange(0, 86400)
+        self._start_spin.setDecimals(1)
+        self._start_spin.setValue(0.0)
+        self._start_spin.setFixedWidth(72)
+        tlay.addWidget(self._start_spin)
+
+        tlay.addWidget(QLabel("End(s):"))
+        self._end_spin = QDoubleSpinBox()
+        self._end_spin.setRange(0, 86400)
+        self._end_spin.setDecimals(1)
+        self._end_spin.setValue(0.0)
+        self._end_spin.setFixedWidth(72)
+        self._end_spin.setToolTip("0 = load to end of file")
+        tlay.addWidget(self._end_spin)
 
         tlay.addWidget(_vline())
 
@@ -452,8 +502,40 @@ class DynoLogViewer(QMainWindow):
         sig_group = QGroupBox("Signals")
         sig_vlay  = QVBoxLayout(sig_group)
         sig_vlay.setContentsMargins(4, 6, 4, 4)
+        sig_vlay.setSpacing(4)
+
+        # Page 0 — column chooser (shown after file is selected, before Load)
+        self._col_chooser = QWidget()
+        chooser_vlay = QVBoxLayout(self._col_chooser)
+        chooser_vlay.setContentsMargins(0, 0, 0, 0)
+        chooser_vlay.setSpacing(4)
+
+        sel_row = QHBoxLayout()
+        all_btn  = QPushButton("All")
+        none_btn = QPushButton("None")
+        all_btn.setFixedHeight(24)
+        none_btn.setFixedHeight(24)
+        all_btn.clicked.connect(lambda: self._set_all_cols(Qt.Checked))
+        none_btn.clicked.connect(lambda: self._set_all_cols(Qt.Unchecked))
+        sel_row.addWidget(all_btn)
+        sel_row.addWidget(none_btn)
+        chooser_vlay.addLayout(sel_row)
+
+        self._col_list = QListWidget()
+        self._col_list.setSelectionMode(QListWidget.NoSelection)
+        chooser_vlay.addWidget(self._col_list, 1)
+
+        load_btn = QPushButton("Load")
+        load_btn.clicked.connect(self._on_load_clicked)
+        chooser_vlay.addWidget(load_btn)
+
+        # Page 1 — signal list (drag source, shown after load)
         self._sig_list = SignalList()
-        sig_vlay.addWidget(self._sig_list)
+
+        self._sig_stack = QStackedWidget()
+        self._sig_stack.addWidget(self._col_chooser)  # page 0
+        self._sig_stack.addWidget(self._sig_list)     # page 1
+        sig_vlay.addWidget(self._sig_stack)
         sig_group.setMinimumWidth(180)
         sig_group.setMaximumWidth(260)
 
@@ -497,7 +579,7 @@ class DynoLogViewer(QMainWindow):
             for root, dirs, files in os.walk(self._log_dir):
                 dirs.sort(reverse=True)          # newest subdirs first (date, then HHMMSS)
                 for fname in sorted(files, reverse=True):
-                    if fname.endswith(".csv"):
+                    if fname.endswith(".csv") or fname.endswith(".csv.gz"):
                         full = os.path.join(root, fname)
                         rel  = os.path.relpath(full, self._log_dir)
                         self._file_combo.addItem(rel, userData=full)
@@ -508,27 +590,170 @@ class DynoLogViewer(QMainWindow):
             self._file_combo.setCurrentIndex(idx)
         elif self._file_combo.count() > 0:
             self._file_combo.setCurrentIndex(0)
-            self._load_file(self._file_combo.itemData(0))
+            self._on_file_selected(0)
+
+    def _make_lazy_loader(self) -> "callable":
+        """Return a per-column loader that reads from self._parquet_path on first access."""
+        def load(field: str):
+            if field not in self._col_cache:
+                if not self._parquet_path:
+                    return None
+                try:
+                    df = pd.read_parquet(self._parquet_path, columns=[X_FIELD, field])
+                except Exception:
+                    return None
+                t = df[X_FIELD].to_numpy(dtype=np.int64)
+                v = df[field].to_numpy(dtype=np.float32)
+                if self._t_ns_cache is None:
+                    self._t_ns_cache = t
+                self._col_cache[field] = v
+            t = self._t_ns_cache
+            return (t - t[0]) * 1e-9, self._col_cache[field].astype(np.float64)
+        return load
+
+    def _stop_parquet_poll(self) -> None:
+        if self._parquet_timer is not None:
+            self._parquet_timer.stop()
+            self._parquet_timer = None
 
     def _on_file_selected(self, idx: int):
         path = self._file_combo.itemData(idx)
-        if path:
-            self._load_file(path)
+        if not path:
+            return
+        self._stop_parquet_poll()
+        self._current_path = path
+        self._parquet_path = ""
+        self._t_ns_cache   = None
+        self._col_cache.clear()
 
-    def _load_file(self, path: str):
+        from pathlib import Path as _Path
+        pq = str(_Path(path).parent / "dyno_pdo.parquet")
+
+        if os.path.exists(pq):
+            self._activate_parquet(pq)
+        else:
+            # ── CSV mode: column chooser + bulk Load ──────────────────────────
+            try:
+                cols = [c for c in pd.read_csv(path, nrows=0).columns if c != X_FIELD]
+            except Exception as e:
+                self._status.setText(f"Error reading header: {e}")
+                return
+            self._col_list.clear()
+            for c in cols:
+                item = QListWidgetItem(c)
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                item.setCheckState(Qt.Checked)
+                self._col_list.addItem(item)
+            self._sig_stack.setCurrentIndex(0)
+            self._status.setText(
+                f"{os.path.basename(path)} — {len(cols)} columns — "
+                f"select columns then click Load  (Parquet converting…)"
+            )
+            # Poll until Parquet appears, then auto-switch
+            self._parquet_pending_path = pq
+            self._parquet_timer = QTimer(self)
+            self._parquet_timer.timeout.connect(self._poll_for_parquet)
+            self._parquet_timer.start(3000)
+
+    def _poll_for_parquet(self) -> None:
+        pq = getattr(self, "_parquet_pending_path", "")
+        if not pq or not os.path.exists(pq):
+            return
+        self._stop_parquet_poll()
+        self._t_ns_cache = None
+        self._col_cache.clear()
+        self._activate_parquet(pq)
+
+    def _activate_parquet(self, pq: str) -> None:
+        """Switch the viewer into lazy Parquet mode for the given .parquet path."""
+        self._parquet_path = pq
         try:
-            df = pd.read_csv(path)
+            import pyarrow.parquet as _pq
+            cols = [n for n in _pq.read_schema(pq).names if n != X_FIELD]
+        except Exception as e:
+            self._status.setText(f"Parquet schema error: {e}")
+            return
+        self._sig_list.populate(cols)
+        self._sig_stack.setCurrentIndex(1)
+        self._grid.set_data_fn(self._make_lazy_loader())
+        pq_mb = os.path.getsize(pq) / 1_048_576
+        self._status.setText(
+            f"{os.path.basename(self._current_path)} — Parquet ({pq_mb:.0f} MB) — "
+            f"{len(cols)} signals — drag to plot"
+        )
+
+    def _set_all_cols(self, state) -> None:
+        for i in range(self._col_list.count()):
+            self._col_list.item(i).setCheckState(state)
+
+    def _on_load_clicked(self) -> None:
+        if not self._current_path:
+            return
+        checked = [
+            self._col_list.item(i).text()
+            for i in range(self._col_list.count())
+            if self._col_list.item(i).checkState() == Qt.Checked
+        ]
+        self._load_file(self._current_path,
+                        self._start_spin.value(),
+                        self._end_spin.value(),
+                        usecols=checked)
+
+    def _load_file(self, path: str, start_s: float = 0.0, end_s: float = 0.0,
+                   usecols: list[str] | None = None):
+        mb = os.path.getsize(path) / 1_048_576
+        self._status.setText(f"Loading {os.path.basename(path)}  ({mb:.1f} MB)…")
+        QApplication.processEvents()
+        try:
+            # Pass 1: stamp_ns only — cheap scan for time bounds and int64 values
+            ts_series = pd.read_csv(
+                path, usecols=[X_FIELD], dtype={X_FIELD: np.int64}
+            )[X_FIELD]
+            t0_ns   = int(ts_series.iloc[0])
+            t1_ns   = int(ts_series.iloc[-1])
+            total_s = (t1_ns - t0_ns) * 1e-9
+
+            read_cols = ([X_FIELD] + usecols) if usecols is not None else None
+
+            if end_s <= 0 or (start_s == 0 and end_s == 0):
+                # Full load — only selected columns
+                df = pd.read_csv(path, usecols=read_cols,
+                                 dtype=np.float32, low_memory=False)
+                df[X_FIELD] = ts_series.values
+            else:
+                # Windowed + column-selective load
+                start_ns = t0_ns + int(start_s * 1e9)
+                end_ns   = t0_ns + int(end_s   * 1e9)
+                chunks = []
+                for chunk in pd.read_csv(path, usecols=read_cols, chunksize=50_000,
+                                         dtype=np.float32, low_memory=False):
+                    t = chunk[X_FIELD].values.astype(np.int64)
+                    if t[-1] < start_ns:
+                        continue
+                    if t[0] > end_ns:
+                        break
+                    mask = (t >= start_ns) & (t <= end_ns)
+                    chunks.append(chunk[mask])
+                df = pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame()
+                if not df.empty:
+                    df[X_FIELD] = df[X_FIELD].astype(np.int64)
         except Exception as e:
             self._status.setText(f"Error: {e}")
             return
         self._df = df
+        self._parquet_path = ""   # CSV load — clear any Parquet state
+        self._t_ns_cache   = None
+        self._col_cache.clear()
         self._sig_list.populate(list(df.columns))
+        self._sig_stack.setCurrentIndex(1)   # switch to drag mode
         self._grid.set_dataframe(df)
         self._display_panel.set_dataframe(df)
         rows = len(df)
         dur  = (df[X_FIELD].iloc[-1] - df[X_FIELD].iloc[0]) * 1e-9 if rows > 1 else 0
+        win_info = f"  |  {dur:.1f} s / {total_s:.1f} s total" if end_s > 0 else f"  |  {dur:.1f} s"
         self._status.setText(
-            f"{os.path.basename(path)}  |  {rows:,} rows  |  {dur:.1f} s  |  {len(df.columns)} signals"
+            f"{os.path.basename(path)}  |  {rows:,} rows{win_info}  |  "
+            f"{len(df.columns)} signals  |  {mb:.1f} MB"
         )
 
     # ── Directory selection ────────────────────────────────────────────────────

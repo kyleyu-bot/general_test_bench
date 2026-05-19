@@ -23,8 +23,8 @@
 #include "ethercat_core/loop.hpp"
 #include "ethercat_core/master.hpp"
 #include "ethercat_core/default_adapter_factory.hpp"
-#include "ethercat_core/devices/beckhoff/el3002/adapter.hpp"
-#include "ethercat_core/devices/beckhoff/el3002/data_types.hpp"
+#include "ethercat_core/devices/beckhoff/elm3002/adapter.hpp"
+#include "ethercat_core/devices/beckhoff/elm3002/data_types.hpp"
 
 extern "C" {
 #include "ethercat.h"
@@ -46,7 +46,7 @@ extern "C" {
 #include <thread>
 
 using namespace ethercat_core;
-using namespace ethercat_core::beckhoff::el3002;
+using namespace ethercat_core::beckhoff::elm3002;
 
 // ── Signal handling ───────────────────────────────────────────────────────────
 
@@ -62,7 +62,7 @@ struct SectionMeta {
     int         size;     // byte count
 };
 
-// Must match el3002/data_types.hpp layout (TX_PDO_SIZE = 24 bytes):
+// Must match elm3002/data_types.hpp layout (TX_PDO_SIZE = 24 bytes):
 //   offset 0  : pai_status_1   uint32  4 bytes
 //   offset 4  : pai_samples_1  int32   4 bytes
 //   offset 8  : timestamp      uint64  8 bytes
@@ -223,7 +223,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    if (!dynamic_cast<El3002Adapter*>(adapter_it->second.get())) {
+    if (!dynamic_cast<Elm3002Adapter*>(adapter_it->second.get())) {
         std::fprintf(stderr, "Slave '%s' is not an ELM3002 adapter.\n", args.slave.c_str());
         master.close();
         return 1;
