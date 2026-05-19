@@ -193,8 +193,9 @@ def _resolve_output_dir(log_folder: Path, serial_number: str = "") -> Path:
     sn = serial_number.strip() or _read_serial_number(log_folder)
     if sn:
         repo_root = Path(__file__).resolve().parents[4]
-        hhmmss = log_folder.name.split("_")[0]
-        out = repo_root / "actuator_test_log" / sn / f"{hhmmss}_encoder_linearization"
+        hhmmss   = log_folder.name.split("_")[0]
+        date_str = log_folder.parent.name
+        out = repo_root / "actuator_test_log" / sn / f"{date_str}-{hhmmss}_encoder_linearization"
     else:
         out = log_folder
     out.mkdir(parents=True, exist_ok=True)
