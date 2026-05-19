@@ -75,6 +75,7 @@ def _post_process(
     f_start_hz: float,
     f_end_hz: float,
     duration_s: float,
+    trim_start_s: float,
 ) -> None:
     """Find this test's log folder, run Bode analysis, and save the plot."""
     import importlib
@@ -139,8 +140,9 @@ def _post_process(
 
     # Resolve output directory
     if sn:
-        hhmmss  = log_folder.name.split("_")[0]
-        out_dir = repo_root / "actuator_test_log" / sn / f"{hhmmss}_bode_plot"
+        hhmmss   = log_folder.name.split("_")[0]
+        date_str = log_folder.parent.name
+        out_dir  = repo_root / "actuator_test_log" / sn / f"{date_str}-{hhmmss}_bode_plot"
     else:
         out_dir = log_folder
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -167,6 +169,7 @@ def _post_process(
             chirp_end_hz=f_end_hz,
             chirp_duration_s=duration_s,
             chirp_kind=chirp_kind,
+            trim_start_s=trim_start_s + 0.3,
         )
 
         import matplotlib
@@ -209,12 +212,17 @@ def run(params: dict, commander, stop_event):
         )
 
     # Enable drive and let it reach Operation Enabled
+    t0_run = time.monotonic()
     _set({})
     time.sleep(0.3)
 
     if stop_event.is_set():
         _set({}, enable=False)
         return
+
+    # Measure elapsed time from run() entry to chirp start — passed to analysis
+    # as trim_start_s so the pre-chirp settle period is excluded from the FFT.
+    trim_start_s = time.monotonic() - t0_run
 
     # Start chirp via function generator
     _set({
@@ -242,6 +250,6 @@ def run(params: dict, commander, stop_event):
         threading.Thread(
             target=_post_process,
             args=(__file__, drive, mode, torque_sensor, chirp_type,
-                  f_start_hz, f_end_hz, duration_s),
+                  f_start_hz, f_end_hz, duration_s, trim_start_s),
             daemon=True,
         ).start()
