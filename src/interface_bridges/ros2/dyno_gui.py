@@ -51,6 +51,13 @@ except ImportError:
     print("ERROR: PyQt5 not found.  pip install PyQt5", file=sys.stderr)
     sys.exit(1)
 
+# ── MIDI (optional) ───────────────────────────────────────────────────────────
+try:
+    import mido
+    _MIDO_AVAILABLE = True
+except ImportError:
+    _MIDO_AVAILABLE = False
+
 # ── ROS2 ─────────────────────────────────────────────────────────────────────
 try:
     import rclpy
@@ -778,6 +785,176 @@ class CommandFieldList(QListWidget):
 # ─────────────────────────────────────────────────────────────────────────────
 # Slider slot (drop target)
 # ─────────────────────────────────────────────────────────────────────────────
+# Behringer X-Touch Compact MIDI bridge
+# ─────────────────────────────────────────────────────────────────────────────
+
+class XTouchMidiBridge(QObject):
+    """
+    Auto-detects a Behringer X-Touch Compact and provides bidirectional fader
+    sync with the GUI slider slots.
+
+    Protocol auto-detected on first message:
+      - 'pitchwheel'    (MCU mode, 14-bit, channels 0-8 per fader)
+      - 'control_change' (standard MIDI mode, 7-bit, CC 1-9 on ch 0)
+
+    Standard MIDI CC layout (confirmed by probe):
+      CC 1-9   = fader 1-9 position (0-127)
+      CC 101+  = fader touch sensors — ignored
+    """
+
+    DEVICE_PATTERN  = "X-TOUCH COMPACT"
+    NUM_FADERS      = 9
+    FADER_CC_BASE   = 1   # fader 1 → CC 1, fader 2 → CC 2, …, fader 9 → CC 9
+
+    # Emitted from background MIDI thread — use Qt queued connection for safety.
+    # (fader_idx: 0-based int, normalized: float 0.0-1.0)
+    fader_moved        = pyqtSignal(int, float)
+    connection_changed = pyqtSignal(bool)   # True = just connected
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._in_port:  object | None = None
+        self._out_port: object | None = None
+        self._connected = False
+        self._midi_mode: str | None   = None  # 'cc' | 'pitchwheel'
+
+        self._scan_timer = QTimer(self)
+        self._scan_timer.timeout.connect(self._scan)
+        self._scan_timer.start(2000)
+        self._scan()   # try immediately on startup
+
+    # ── port detection ────────────────────────────────────────────────────────
+
+    def _find_port(self, port_list):
+        for n in port_list:
+            if self.DEVICE_PATTERN in n.upper():
+                return n
+        return None
+
+    def _scan(self):
+        if self._connected:
+            if not self._find_port(mido.get_input_names()):
+                self._disconnect()
+        else:
+            name = self._find_port(mido.get_input_names())
+            if name:
+                self._connect(name)
+
+    def _connect(self, in_name):
+        try:
+            self._in_port = mido.open_input(in_name)   # polling, no callback thread
+            out_name = self._find_port(mido.get_output_names())
+            if out_name:
+                self._out_port = mido.open_output(out_name)
+                # Park all fader motors at bottom so the device is in a known state.
+                for i in range(self.NUM_FADERS):
+                    self._out_port.send(mido.Message(
+                        'control_change', channel=0,
+                        control=i + self.FADER_CC_BASE, value=0))
+            self._midi_mode = None   # re-detect on each fresh connection
+            self._connected = True
+            self._poll_timer = QTimer(self)
+            self._poll_timer.timeout.connect(self._poll)
+            self._poll_timer.start(5)   # 200 Hz — matches test script's 5 ms sleep
+            self.connection_changed.emit(True)
+        except Exception as exc:
+            print(f"[MIDI] Connect error: {exc}", file=sys.stderr)
+
+    def _disconnect(self):
+        if hasattr(self, '_poll_timer') and self._poll_timer is not None:
+            self._poll_timer.stop()
+            self._poll_timer = None
+        for attr in ("_in_port", "_out_port"):
+            port = getattr(self, attr)
+            if port is not None:
+                try:
+                    port.close()
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+        self._connected = False
+        self.connection_changed.emit(False)
+
+    # ── MIDI polling (main thread via QTimer) ─────────────────────────────────
+
+    def _poll(self):
+        if self._in_port is None:
+            return
+        try:
+            for msg in self._in_port.iter_pending():
+                self._process_msg(msg)
+        except Exception:
+            self._disconnect()
+
+    def _process_msg(self, msg):
+        if msg.type == 'pitchwheel':
+            if self._midi_mode is None:
+                self._midi_mode = 'pitchwheel'
+            if self._midi_mode != 'pitchwheel':
+                return
+            if 0 <= msg.channel < self.NUM_FADERS:
+                # Echo back so the motor tracks correctly.
+                if self._out_port:
+                    try:
+                        self._out_port.send(msg.copy())
+                    except Exception:
+                        pass
+                norm = (msg.pitch + 8192) / 16383.0
+                self.fader_moved.emit(msg.channel, max(0.0, min(1.0, norm)))
+
+        elif msg.type == 'control_change':
+            cc_lo = self.FADER_CC_BASE
+            cc_hi = self.FADER_CC_BASE + self.NUM_FADERS  # exclusive
+            if msg.control < cc_lo or msg.control >= cc_hi:
+                return  # touch sensors (CC 101+) and unrelated CCs — ignore
+            if self._midi_mode is None:
+                self._midi_mode = 'cc'
+            if self._midi_mode != 'cc':
+                return
+            # Echo back — required for the motor to report smooth intermediate values.
+            if self._out_port:
+                try:
+                    self._out_port.send(msg.copy())
+                except Exception:
+                    pass
+            fader_idx = msg.control - self.FADER_CC_BASE
+            norm = msg.value / 127.0
+            self.fader_moved.emit(fader_idx, max(0.0, min(1.0, norm)))
+
+    # ── MIDI output ───────────────────────────────────────────────────────────
+
+    def send_fader(self, fader_idx: int, normalized: float):
+        """Move motorized fader to position (0.0 = bottom, 1.0 = top)."""
+        if not self._out_port or not self._connected or self._midi_mode is None:
+            return
+        norm = max(0.0, min(1.0, normalized))
+        try:
+            if self._midi_mode == 'pitchwheel':
+                pitch = int(norm * 16383) - 8192
+                self._out_port.send(
+                    mido.Message('pitchwheel', channel=fader_idx, pitch=pitch))
+            else:
+                self._out_port.send(
+                    mido.Message('control_change', channel=0,
+                                 control=fader_idx + self.FADER_CC_BASE,
+                                 value=int(norm * 127)))
+        except Exception:
+            pass
+
+    # ── teardown ─────────────────────────────────────────────────────────────
+
+    def close(self):
+        self._scan_timer.stop()
+        if hasattr(self, '_poll_timer') and self._poll_timer is not None:
+            self._poll_timer.stop()
+        self._disconnect()
+
+    @property
+    def is_connected(self):
+        return self._connected
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 class SliderSlot(QGroupBox):
     """
@@ -798,6 +975,8 @@ class SliderSlot(QGroupBox):
         self._is_field_allowed = is_field_allowed  # (key) -> bool
         self._on_assigned      = on_assigned       # (key) -> None
         self._on_unassigned    = on_unassigned     # (key) -> None
+        self._midi_updating    = False             # suppress MIDI echo while setting from MIDI
+        self._on_user_changed  = None              # (normalized: float) -> None — set by DynoWindow
         self.setAcceptDrops(True)
         self.setMinimumWidth(110)
 
@@ -900,6 +1079,10 @@ class SliderSlot(QGroupBox):
         self._exact_spin.blockSignals(True)
         self._exact_spin.setValue(v)
         self._exact_spin.blockSignals(False)
+        if not self._midi_updating and self._on_user_changed and self._field is not None:
+            lo, hi = self._slider.minimum(), self._slider.maximum()
+            norm = (v - lo) / (hi - lo) if hi != lo else 0.0
+            self._on_user_changed(max(0.0, min(1.0, norm)))
 
     def _on_exact_changed(self, v: int):
         self._slider.blockSignals(True)
@@ -1038,6 +1221,22 @@ class SliderSlot(QGroupBox):
         if self._float_mode:
             return self._committed_float / self._scale
         return self._slider.value() / self._scale
+
+    def set_from_midi(self, normalized: float):
+        """Set slider position from a MIDI message without echoing back to MIDI."""
+        if self._float_mode or self._field is None:
+            return
+        lo, hi = self._slider.minimum(), self._slider.maximum()
+        v = max(lo, min(hi, int(lo + normalized * (hi - lo))))
+        self._midi_updating = True
+        self._slider.setValue(v)
+        self._midi_updating = False
+
+    @property
+    def normalized_value(self) -> float:
+        """Current slider position as 0.0-1.0 (bottom to top)."""
+        lo, hi = self._slider.minimum(), self._slider.maximum()
+        return (self._slider.value() - lo) / (hi - lo) if hi != lo else 0.0
 
     def zero(self):
         if self._float_mode:
@@ -1683,6 +1882,12 @@ class DynoWindow(QMainWindow):
         self._build_ui()
         commander.set_limits_callback(self._on_limits_updated)
 
+        self._midi_bridge: XTouchMidiBridge | None = None
+        if _MIDO_AVAILABLE:
+            self._midi_bridge = XTouchMidiBridge(self)
+            self._midi_bridge.fader_moved.connect(self._on_fader_moved)
+            self._midi_bridge.connection_changed.connect(self._on_midi_connection)
+
         self._fault_hist_state: dict | None = None  # active fault-history read state
         self._sdo_pending_time: float | None = None  # monotonic time of last SDO request
         self._ecat_pending: str | None = None        # "pre_op", "main_store", "dut_store"
@@ -1760,6 +1965,14 @@ class DynoWindow(QMainWindow):
             )
             for _ in range(NUM_SLOTS)
         ]
+        for _idx, _slot in enumerate(self._slots):
+            def _make_user_cb(_i):
+                def _cb(norm):
+                    if self._midi_bridge:
+                        self._midi_bridge.send_fader(_i, norm)
+                return _cb
+            _slot._on_user_changed = _make_user_cb(_idx)
+
         slots_w   = QWidget()
         slots_lay = QHBoxLayout(slots_w)
         slots_lay.setSpacing(6)
@@ -2309,6 +2522,14 @@ class DynoWindow(QMainWindow):
         self._bridge_status_lbl.setFont(QFont("Monospace", 8))
         status_lay.addWidget(self._bridge_status_lbl)
 
+        if _MIDO_AVAILABLE:
+            self._midi_status_lbl = QLabel("X-Touch: scanning…")
+            self._midi_status_lbl.setFont(QFont("Monospace", 8))
+            self._midi_status_lbl.setStyleSheet("color: gray; font-style: italic;")
+            status_lay.addWidget(self._midi_status_lbl)
+        else:
+            self._midi_status_lbl = None
+
         self._bridge_start_btn   = QPushButton("Start")
         self._bridge_stop_btn    = QPushButton("Stop")
         self._bridge_restart_btn = QPushButton("Restart")
@@ -2587,6 +2808,25 @@ class DynoWindow(QMainWindow):
         if self._script_running:
             return   # must abort script before using fault reset
         self._cmd.pulse_fault_reset()
+
+    # ── MIDI bridge handlers ──────────────────────────────────────────────────
+
+    def _on_fader_moved(self, fader_idx: int, normalized: float):
+        if 0 <= fader_idx < len(self._slots):
+            self._slots[fader_idx].set_from_midi(normalized)
+
+    def _on_midi_connection(self, connected: bool):
+        if self._midi_status_lbl is None:
+            return
+        if connected:
+            self._midi_status_lbl.setText("X-Touch: ● Connected")
+            self._midi_status_lbl.setStyleSheet("color: green;")
+            for i, slot in enumerate(self._slots):
+                if slot.field is not None and self._midi_bridge:
+                    self._midi_bridge.send_fader(i, slot.normalized_value)
+        else:
+            self._midi_status_lbl.setText("X-Touch: ○ Disconnected")
+            self._midi_status_lbl.setStyleSheet("color: orange;")
 
     # ── publish ───────────────────────────────────────────────────────────────
 
@@ -2902,6 +3142,8 @@ class DynoWindow(QMainWindow):
             # Give the script thread a moment to see stop_event and stop sending
             # enable=True before main() sends its zero command.
             time.sleep(0.15)
+        if self._midi_bridge:
+            self._midi_bridge.close()
         event.accept()
 
     # ── Bridge management ─────────────────────────────────────────────────────
