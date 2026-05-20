@@ -32,7 +32,7 @@ struct PdoLogRecord {
     uint16_t main_tx_statusword          = 0;
     int8_t   main_tx_mode_display        = 0;    ///< 0x6061
     int32_t  main_tx_output_enc_pos      = 0;    ///< 0x6064  output-side encoder (cnt)
-    float    main_tx_power_stage_temp_3  = 0.f;  ///< 0x205D
+    int32_t  main_tx_outputside_encoder_raw = 0;  ///< 0x2051  secondary absolute encoder
     float    main_tx_power_stage_temp_2  = 0.f;  ///< 0x2064
     float    main_tx_motor_temp          = 0.f;  ///< 0x2063  (°C)
     uint16_t main_tx_error_code          = 0;    ///< 0x603F
@@ -40,8 +40,9 @@ struct PdoLogRecord {
     int32_t  main_tx_input_enc_pos       = 0;    ///< 0x204A  input-side encoder (cnt)
     float    main_tx_motor_temp_2        = 0.f;  ///< 0x2065
     float    main_tx_velocity_setpoint   = 0.f;  ///< 0x2079
-    float    main_tx_iq_actual           = 0.f;  ///< 0x203B  (A)
-    float    main_tx_id_actual           = 0.f;  ///< 0x203C  (A)
+    float    main_tx_iq_actual                      = 0.f;  ///< 0x203B  (A)
+    int32_t  main_tx_compensated_output_position    = 0;    ///< 0x2056  (raw counts)
+    float    main_tx_compensated_output_position_rad = 0.f; ///< 0x2056  (rad)
     float    main_tx_power_stage_temp_1  = 0.f;  ///< 0x2061
     float    main_tx_iq_command          = 0.f;  ///< 0x2072  (A)
     float    main_tx_id_command          = 0.f;  ///< 0x2073  (A)
@@ -67,7 +68,7 @@ struct PdoLogRecord {
     uint16_t dut_tx_statusword           = 0;
     int8_t   dut_tx_mode_display         = 0;
     int32_t  dut_tx_output_enc_pos       = 0;
-    float    dut_tx_power_stage_temp_3   = 0.f;
+    int32_t  dut_tx_outputside_encoder_raw  = 0;  ///< 0x2051  secondary absolute encoder
     float    dut_tx_power_stage_temp_2   = 0.f;
     float    dut_tx_motor_temp           = 0.f;
     uint16_t dut_tx_error_code           = 0;
@@ -75,8 +76,9 @@ struct PdoLogRecord {
     int32_t  dut_tx_input_enc_pos        = 0;
     float    dut_tx_motor_temp_2         = 0.f;
     float    dut_tx_velocity_setpoint    = 0.f;
-    float    dut_tx_iq_actual            = 0.f;
-    float    dut_tx_id_actual            = 0.f;
+    float    dut_tx_iq_actual                       = 0.f;
+    int32_t  dut_tx_compensated_output_position     = 0;
+    float    dut_tx_compensated_output_position_rad = 0.f;
     float    dut_tx_power_stage_temp_1   = 0.f;
     float    dut_tx_iq_command           = 0.f;
     float    dut_tx_id_command           = 0.f;
@@ -111,9 +113,10 @@ inline constexpr const char* PDO_LOG_CSV_HEADER =
     "cycle_count,stamp_ns,wkc,cycle_time_ns,dc_error_ns,period_ns,"
     // main tx
     "main_tx_statusword,main_tx_mode_display,main_tx_output_enc_pos,"
-    "main_tx_power_stage_temp_3,main_tx_power_stage_temp_2,main_tx_motor_temp,main_tx_error_code,"
+    "main_tx_outputside_encoder_raw,main_tx_power_stage_temp_2,main_tx_motor_temp,main_tx_error_code,"
     "main_tx_motor_velocity,main_tx_input_enc_pos,main_tx_motor_temp_2,"
-    "main_tx_velocity_setpoint,main_tx_iq_actual,main_tx_id_actual,"
+    "main_tx_velocity_setpoint,main_tx_iq_actual,"
+    "main_tx_compensated_output_position,main_tx_compensated_output_position_rad,"
     "main_tx_power_stage_temp_1,main_tx_iq_command,main_tx_id_command,"
     // main rx
     "main_rx_mode_of_operation,main_rx_target_position,main_rx_target_velocity,"
@@ -122,9 +125,10 @@ inline constexpr const char* PDO_LOG_CSV_HEADER =
     "main_rx_pos_kp,main_rx_pos_ki,main_rx_pos_kd,main_rx_enable,"
     // dut tx
     "dut_tx_statusword,dut_tx_mode_display,dut_tx_output_enc_pos,"
-    "dut_tx_power_stage_temp_3,dut_tx_power_stage_temp_2,dut_tx_motor_temp,dut_tx_error_code,"
+    "dut_tx_outputside_encoder_raw,dut_tx_power_stage_temp_2,dut_tx_motor_temp,dut_tx_error_code,"
     "dut_tx_motor_velocity,dut_tx_input_enc_pos,dut_tx_motor_temp_2,"
-    "dut_tx_velocity_setpoint,dut_tx_iq_actual,dut_tx_id_actual,"
+    "dut_tx_velocity_setpoint,dut_tx_iq_actual,"
+    "dut_tx_compensated_output_position,dut_tx_compensated_output_position_rad,"
     "dut_tx_power_stage_temp_1,dut_tx_iq_command,dut_tx_id_command,"
     // dut rx
     "dut_rx_mode_of_operation,dut_rx_target_position,dut_rx_target_velocity,"

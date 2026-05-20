@@ -60,10 +60,11 @@ struct DriveStatus {
     int32_t         max_position                 = 0;
     int32_t         min_position                 = 0;
     float           max_velocity_abs             = 0.0f;
-    float           power_stage_temp_3          = 0.0f;  // 0x205D
+    int32_t         outputside_encoder_raw       = 0;     // 0x2051, secondary absolute encoder
     float           motor_temp                   = 0.0f;
-    float           iq_actual                    = 0.0f;
-    float           id_actual                    = 0.0f;
+    float           iq_actual                          = 0.0f;
+    int32_t         compensated_output_position_raw    = 0;     // 0x2056, raw encoder counts
+    float           compensated_output_position_rad    = 0.0f;  // 0x2056 * π/2^19
     float           power_stage_temp_1           = 0.0f;  // 0x2061
     float           iq_command                   = 0.0f;
     float           id_command                   = 0.0f;

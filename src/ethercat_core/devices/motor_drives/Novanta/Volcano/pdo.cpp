@@ -64,10 +64,10 @@ DriveStatus unpackStatus(
     int32_t  input_encoder_pos     = 0;
     float    motor_temp_2          = 0.f;
     float    received_velocity_raw = 0.0f;
-    float    power_stage_temp_3           = 0.0f;
+    int32_t  outputside_encoder_raw        = 0;
     float    motor_temp            = 0.0f;
-    float    iq_actual             = 0.0f;
-    float    id_actual             = 0.0f;
+    float    iq_actual                       = 0.0f;
+    int32_t  compensated_output_position_raw = 0;
     float    power_stage_temp_1            = 0.0f;
     float    iq_command            = 0.0f;
     float    id_command            = 0.0f;
@@ -87,10 +87,10 @@ DriveStatus unpackStatus(
         input_encoder_pos      = pdo.input_encoder_pos;
         motor_temp_2           = pdo.motor_temp_2;
         received_velocity_raw  = pdo.velocity_setpoint;
-        power_stage_temp_3            = pdo.power_stage_temp_3;
+        outputside_encoder_raw         = pdo.outputside_encoder_raw;
         motor_temp             = pdo.motor_temp;
-        iq_actual              = pdo.iq_actual;
-        id_actual              = pdo.id_actual;
+        iq_actual                       = pdo.iq_actual;
+        compensated_output_position_raw = pdo.compensated_output_position;
         power_stage_temp_1             = pdo.power_stage_temp_1;
         iq_command             = pdo.iq_command;
         id_command             = pdo.id_command;
@@ -141,10 +141,13 @@ DriveStatus unpackStatus(
     s.input_encoder_pos         = input_encoder_pos;
     s.motor_temp_2              = motor_temp_2;
     s.velocity_command_received = received_velocity_raw;
-    s.power_stage_temp_3               = power_stage_temp_3;
+    s.outputside_encoder_raw           = outputside_encoder_raw;
     s.motor_temp                = motor_temp;
-    s.iq_actual                 = iq_actual;
-    s.id_actual                 = id_actual;
+    s.iq_actual                          = iq_actual;
+    s.compensated_output_position_raw    = compensated_output_position_raw;
+    static constexpr float kCntToRad = 3.14159265358979323846f / (1 << 19);
+    s.compensated_output_position_rad    = static_cast<float>(compensated_output_position_raw)
+                                           * kCntToRad;
     s.power_stage_temp_1                = power_stage_temp_1;
     s.iq_command                = iq_command;
     s.id_command                = id_command;

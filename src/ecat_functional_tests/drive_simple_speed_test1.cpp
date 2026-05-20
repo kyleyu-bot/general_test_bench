@@ -395,7 +395,7 @@ int main(int argc, char** argv) {
                     "al=%s state=%s "
                     "cmd_6060=%d mode_6061=%d "
                     "cmd_60FF=%d speed_606C=%d "
-                    "rx_cmd_2079=%.3f bus_v_2060=%.3f "
+                    "rx_cmd_2079=%.3f out2_enc=%d "
                     "status=0x%04X err=0x%04X\n",
                     static_cast<unsigned long>(stats.cycle_count),
                     stats.last_wkc,
@@ -411,7 +411,7 @@ int main(int argc, char** argv) {
                     speed_cmd,
                     ds.measured_input_side_velocity_raw,
                     static_cast<double>(ds.velocity_command_received),
-                    static_cast<double>(ds.power_stage_temp_3),
+                    ds.outputside_encoder_raw,
                     static_cast<unsigned>(ds.status_word),
                     static_cast<unsigned>(ds.error_code)
                 );

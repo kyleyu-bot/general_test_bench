@@ -325,7 +325,7 @@ EthercatLoop::CycleCallback DualNovantaTestbench::makeCallback(
                 rec.main_tx_statusword        = ds.status_word;
                 rec.main_tx_mode_display      = ds.mode_of_operation_display;
                 rec.main_tx_output_enc_pos    = ds.measured_output_side_position_raw_cnt;
-                rec.main_tx_power_stage_temp_3 = ds.power_stage_temp_3;
+                rec.main_tx_outputside_encoder_raw = ds.outputside_encoder_raw;
                 rec.main_tx_power_stage_temp_2 = ds.power_stage_temp_2;
                 rec.main_tx_motor_temp        = ds.motor_temp;
                 rec.main_tx_error_code        = ds.error_code;
@@ -333,8 +333,9 @@ EthercatLoop::CycleCallback DualNovantaTestbench::makeCallback(
                 rec.main_tx_input_enc_pos     = ds.input_encoder_pos;
                 rec.main_tx_motor_temp_2      = ds.motor_temp_2;
                 rec.main_tx_velocity_setpoint = ds.velocity_command_received;
-                rec.main_tx_iq_actual         = ds.iq_actual;
-                rec.main_tx_id_actual         = ds.id_actual;
+                rec.main_tx_iq_actual                      = ds.iq_actual;
+                rec.main_tx_compensated_output_position    = ds.compensated_output_position_raw;
+                rec.main_tx_compensated_output_position_rad = ds.compensated_output_position_rad;
                 rec.main_tx_power_stage_temp_1 = ds.power_stage_temp_1;
                 rec.main_tx_iq_command        = ds.iq_command;
                 rec.main_tx_id_command        = ds.id_command;
@@ -342,7 +343,7 @@ EthercatLoop::CycleCallback DualNovantaTestbench::makeCallback(
                 rec.dut_tx_statusword         = ds.status_word;
                 rec.dut_tx_mode_display       = ds.mode_of_operation_display;
                 rec.dut_tx_output_enc_pos     = ds.measured_output_side_position_raw_cnt;
-                rec.dut_tx_power_stage_temp_3  = ds.power_stage_temp_3;
+                rec.dut_tx_outputside_encoder_raw  = ds.outputside_encoder_raw;
                 rec.dut_tx_power_stage_temp_2  = ds.power_stage_temp_2;
                 rec.dut_tx_motor_temp         = ds.motor_temp;
                 rec.dut_tx_error_code         = ds.error_code;
@@ -350,8 +351,9 @@ EthercatLoop::CycleCallback DualNovantaTestbench::makeCallback(
                 rec.dut_tx_input_enc_pos      = ds.input_encoder_pos;
                 rec.dut_tx_motor_temp_2       = ds.motor_temp_2;
                 rec.dut_tx_velocity_setpoint  = ds.velocity_command_received;
-                rec.dut_tx_iq_actual          = ds.iq_actual;
-                rec.dut_tx_id_actual          = ds.id_actual;
+                rec.dut_tx_iq_actual                       = ds.iq_actual;
+                rec.dut_tx_compensated_output_position     = ds.compensated_output_position_raw;
+                rec.dut_tx_compensated_output_position_rad = ds.compensated_output_position_rad;
                 rec.dut_tx_power_stage_temp_1  = ds.power_stage_temp_1;
                 rec.dut_tx_iq_command         = ds.iq_command;
                 rec.dut_tx_id_command         = ds.id_command;
@@ -429,12 +431,14 @@ std::string DualNovantaTestbench::serializeToCsvRow(const dyno::PdoLogRecord& r)
       << r.cycle_time_ns << ',' << r.dc_error_ns   << ',' << r.period_ns   << ',';
     // main tx
     o << r.main_tx_statusword        << ',' << static_cast<int>(r.main_tx_mode_display)  << ','
-      << r.main_tx_output_enc_pos    << ',' << r.main_tx_power_stage_temp_3 << ','
+      << r.main_tx_output_enc_pos    << ',' << r.main_tx_outputside_encoder_raw << ','
       << r.main_tx_power_stage_temp_2 << ',' << r.main_tx_motor_temp         << ','
       << r.main_tx_error_code        << ',' << r.main_tx_motor_velocity     << ','
       << r.main_tx_input_enc_pos     << ',' << r.main_tx_motor_temp_2       << ','
-      << r.main_tx_velocity_setpoint << ',' << r.main_tx_iq_actual          << ','
-      << r.main_tx_id_actual         << ',' << r.main_tx_power_stage_temp_1 << ','
+      << r.main_tx_velocity_setpoint << ',' << r.main_tx_iq_actual << ','
+      << r.main_tx_compensated_output_position << ','
+      << r.main_tx_compensated_output_position_rad << ','
+      << r.main_tx_power_stage_temp_1 << ','
       << r.main_tx_iq_command        << ',' << r.main_tx_id_command         << ',';
     // main rx
     o << static_cast<int>(r.main_rx_mode_of_operation) << ','
@@ -448,12 +452,14 @@ std::string DualNovantaTestbench::serializeToCsvRow(const dyno::PdoLogRecord& r)
       << static_cast<int>(r.main_rx_enable) << ',';
     // dut tx
     o << r.dut_tx_statusword         << ',' << static_cast<int>(r.dut_tx_mode_display)   << ','
-      << r.dut_tx_output_enc_pos     << ',' << r.dut_tx_power_stage_temp_3  << ','
+      << r.dut_tx_output_enc_pos     << ',' << r.dut_tx_outputside_encoder_raw  << ','
       << r.dut_tx_power_stage_temp_2  << ',' << r.dut_tx_motor_temp          << ','
       << r.dut_tx_error_code         << ',' << r.dut_tx_motor_velocity      << ','
       << r.dut_tx_input_enc_pos      << ',' << r.dut_tx_motor_temp_2        << ','
-      << r.dut_tx_velocity_setpoint  << ',' << r.dut_tx_iq_actual           << ','
-      << r.dut_tx_id_actual          << ',' << r.dut_tx_power_stage_temp_1  << ','
+      << r.dut_tx_velocity_setpoint << ',' << r.dut_tx_iq_actual << ','
+      << r.dut_tx_compensated_output_position << ','
+      << r.dut_tx_compensated_output_position_rad << ','
+      << r.dut_tx_power_stage_temp_1 << ','
       << r.dut_tx_iq_command         << ',' << r.dut_tx_id_command          << ',';
     // dut rx
     o << static_cast<int>(r.dut_rx_mode_of_operation) << ','
@@ -503,10 +509,11 @@ std::string DualNovantaTestbench::makeDriveJson(
         j["in_enc_pos"]         = ds.input_encoder_pos;
         j["motor_temp_2"]       = ds.motor_temp_2;
         j["power_stage_temp_2"] = ds.power_stage_temp_2;
-        j["power_stage_temp_3"] = ds.power_stage_temp_3;
+        j["outputside_encoder_raw"] = ds.outputside_encoder_raw;
         j["motor_temp"]         = ds.motor_temp;
-        j["iq_actual"]          = ds.iq_actual;
-        j["id_actual"]          = ds.id_actual;
+        j["iq_actual"]                        = ds.iq_actual;
+        j["compensated_output_position_raw"]  = ds.compensated_output_position_raw;
+        j["compensated_output_position_rad"]  = ds.compensated_output_position_rad;
         j["power_stage_temp_1"] = ds.power_stage_temp_1;
         j["iq_command"]         = ds.iq_command;
         j["id_command"]         = ds.id_command;
@@ -556,7 +563,7 @@ void DualNovantaTestbench::printDebug(
             "al=%s state=%s "
             "cmd_60FF=%.3f speed_606C=%d "
             "mode_6061=%d sw=0x%04X err=0x%04X "
-            "pwr_s3=%.2f "
+            "out2_enc=%d "
             "vel_kp=%.4f vel_ki=%.4f torque_kp=%.4f\n",
             static_cast<unsigned long>(stats.cycle_count),
             stats.last_wkc,
@@ -567,7 +574,7 @@ void DualNovantaTestbench::printDebug(
             static_cast<int>(ds.mode_of_operation_display),
             static_cast<unsigned>(ds.status_word),
             static_cast<unsigned>(ds.error_code),
-            static_cast<double>(ds.power_stage_temp_3),
+            ds.outputside_encoder_raw,
             static_cast<double>(cmd.main_vel_kp),
             static_cast<double>(cmd.main_vel_ki),
             static_cast<double>(cmd.main_torque_kp)
@@ -582,7 +589,7 @@ void DualNovantaTestbench::printDebug(
             "al=%s state=%s "
             "cmd_60FF=%.3f speed_606C=%d "
             "mode_6061=%d sw=0x%04X err=0x%04X "
-            "pwr_s3=%.2f "
+            "out2_enc=%d "
             "vel_kp=%.4f vel_ki=%.4f torque_kp=%.4f\n",
             static_cast<unsigned long>(stats.cycle_count),
             stats.last_wkc,
@@ -593,7 +600,7 @@ void DualNovantaTestbench::printDebug(
             static_cast<int>(ds.mode_of_operation_display),
             static_cast<unsigned>(ds.status_word),
             static_cast<unsigned>(ds.error_code),
-            static_cast<double>(ds.power_stage_temp_3),
+            ds.outputside_encoder_raw,
             static_cast<double>(cmd.dut_vel_kp),
             static_cast<double>(cmd.dut_vel_ki),
             static_cast<double>(cmd.dut_torque_kp)
