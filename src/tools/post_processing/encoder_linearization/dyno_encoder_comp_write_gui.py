@@ -265,6 +265,14 @@ class EncoderCompWriterApp(tk.Tk):
                      state="readonly", width=10).grid(
             row=0, column=3, sticky="w", padx=6)
 
+        ttk.Label(tgt, text="LUT scalar:").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        self._scalar_var = tk.StringVar(value="1.0")
+        ttk.Entry(tgt, textvariable=self._scalar_var, width=10).grid(
+            row=1, column=1, sticky="w", padx=6, pady=(8, 0))
+        ttk.Label(tgt, text="(scales LUT rad values before int conversion)",
+                  foreground="grey").grid(row=1, column=2, columnspan=2, sticky="w",
+                                          padx=(24, 0), pady=(8, 0))
+
         # Progress
         prg = ttk.LabelFrame(self, text="Progress", padding=10)
         prg.pack(fill="x", padx=10, pady=(10, 0))
@@ -284,6 +292,8 @@ class EncoderCompWriterApp(tk.Tk):
         self._readback_btn = ttk.Button(bot, text="Read Back",
                                         command=self._start_readback)
         self._readback_btn.pack(side="left", padx=(8, 0))
+        self._wipe_btn = ttk.Button(bot, text="Wipe", command=self._start_wipe)
+        self._wipe_btn.pack(side="left", padx=(8, 0))
         self._status_var = tk.StringVar(value="Ready.")
         ttk.Label(bot, textvariable=self._status_var, foreground="grey").pack(
             side="left", padx=(12, 0))
@@ -338,6 +348,13 @@ class EncoderCompWriterApp(tk.Tk):
         state = "normal" if enabled else "disabled"
         self._write_btn.configure(state=state)
         self._readback_btn.configure(state=state)
+        self._wipe_btn.configure(state=state)
+
+    def _scalar(self) -> float:
+        try:
+            return float(self._scalar_var.get().strip())
+        except ValueError as exc:
+            raise ValueError("LUT scalar must be a number.") from exc
 
     # ── Write sequence ────────────────────────────────────────────────────────
     def _start_write(self) -> None:
@@ -355,9 +372,10 @@ class EncoderCompWriterApp(tk.Tk):
             return
 
         try:
-            rows = _load_lut_csv(csv_path)
+            rows   = _load_lut_csv(csv_path)
+            scalar = self._scalar()
         except Exception as exc:
-            messagebox.showerror("CSV load failed", str(exc))
+            messagebox.showerror("Input error", str(exc))
             return
 
         if not rows:
@@ -371,11 +389,11 @@ class EncoderCompWriterApp(tk.Tk):
 
         threading.Thread(
             target=self._write_worker,
-            args=(rows, drive, side),
+            args=(rows, drive, side, scalar),
             daemon=True,
         ).start()
 
-    def _write_worker(self, rows: list[tuple], drive: str, side: str) -> None:
+    def _write_worker(self, rows: list[tuple], drive: str, side: str, scalar: float) -> None:
         try:
             sdo = _get_sdo()
         except Exception as exc:
@@ -417,7 +435,7 @@ class EncoderCompWriterApp(tk.Tk):
             # publishes would overwrite each other before being processed.
             sdo.write_sync(drive, idx_obj, _SUBINDEX, _SIZE_BYTES, lut_index)
             sdo.write_sync(drive, val_obj, _SUBINDEX, _SIZE_BYTES,
-                           _rad_to_enc_counts(lut_value))
+                           _rad_to_enc_counts(lut_value * scalar))
             entries_done += 1
             _update()
 
@@ -426,15 +444,85 @@ class EncoderCompWriterApp(tk.Tk):
         entries_done += 1
         _update()
 
-        time.sleep(1.0)
-        _update("Storing to non-volatile memory…")
-        sdo.store_all(drive)
-        time.sleep(2.0)
+        # time.sleep(1.0)
+        # _update("Storing to non-volatile memory…")
+        # sdo.store_all(drive)
+        # time.sleep(2.0)
 
         self.after(0, lambda: (
             self._set_buttons(True),
             self._progress_var.set(100.0),
             self._status_var.set("Done — LUT written and stored."),
+        ))
+
+    # ── Wipe sequence ─────────────────────────────────────────────────────────
+    def _start_wipe(self) -> None:
+        drive = self._drive_var.get()
+        side  = self._side_var.get()
+
+        if not messagebox.askyesno(
+            "Confirm Wipe",
+            f"Write all zeros to the {side}-side LUT on drive '{drive}'?\n"
+            "This will overwrite existing compensation values.",
+        ):
+            return
+
+        self._set_buttons(False)
+        self._progress_var.set(0.0)
+        self._progress_lbl.configure(text="")
+        self._status_var.set("Connecting…")
+
+        threading.Thread(
+            target=self._wipe_worker,
+            args=(drive, side),
+            daemon=True,
+        ).start()
+
+    def _wipe_worker(self, drive: str, side: str) -> None:
+        try:
+            sdo = _get_sdo()
+        except Exception as exc:
+            self.after(0, lambda e=str(exc): messagebox.showerror("ROS2 unavailable", e))
+            self.after(0, lambda: self._set_buttons(True))
+            self.after(0, lambda: self._status_var.set("Ready."))
+            return
+
+        if side == "input":
+            idx_obj = _INPUT_IDX
+            val_obj = _INPUT_VAL
+            en_obj  = _INPUT_EN
+        else:
+            idx_obj = _OUTPUT_IDX
+            val_obj = _OUTPUT_VAL
+            en_obj  = _OUTPUT_EN
+
+        self.after(0, lambda: self._status_var.set("Wiping…"))
+
+        def _update(msg: str = "") -> None:
+            pct = 100.0 * entries_done / (_LUT_SIZE + 1)
+            self.after(0, lambda p=pct: self._progress_var.set(p))
+            self.after(0, lambda d=entries_done:
+                       self._progress_lbl.configure(
+                           text=f"{d} / {_LUT_SIZE} entries wiped"))
+            if msg:
+                self.after(0, lambda m=msg: self._status_var.set(m))
+
+        entries_done = 0
+        for i in range(_LUT_SIZE):
+            sdo.write_sync(drive, idx_obj, _SUBINDEX, _SIZE_BYTES, i)
+            sdo.write_sync(drive, val_obj, _SUBINDEX, _SIZE_BYTES, 0)
+            entries_done += 1
+            _update()
+
+        _update(f"Enabling {side}-side compensation…")
+        sdo.write_sync(drive, en_obj, _SUBINDEX, _SIZE_BYTES, 1)
+        entries_done += 1
+        _update()
+
+        self.after(0, lambda: (
+            self._set_buttons(True),
+            self._progress_var.set(100.0),
+            self._status_var.set("Done — LUT wiped (all zeros)."),
         ))
 
     # ── Readback sequence ─────────────────────────────────────────────────────
