@@ -37,7 +37,7 @@ import traceback
 
 # ── Qt ────────────────────────────────────────────────────────────────────────
 try:
-    from PyQt5.QtCore    import Qt, QTimer, QMimeData, QByteArray, QRegularExpression
+    from PyQt5.QtCore    import Qt, QTimer, QMimeData, QByteArray, QRegularExpression, QObject, pyqtSignal
     from PyQt5.QtGui     import QFont, QRegularExpressionValidator
     from PyQt5.QtWidgets import (
         QApplication, QMainWindow, QWidget,
