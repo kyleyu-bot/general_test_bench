@@ -292,6 +292,8 @@ class EncoderCompWriterApp(tk.Tk):
         self._readback_btn = ttk.Button(bot, text="Read Back",
                                         command=self._start_readback)
         self._readback_btn.pack(side="left", padx=(8, 0))
+        self._wipe_btn = ttk.Button(bot, text="Wipe", command=self._start_wipe)
+        self._wipe_btn.pack(side="left", padx=(8, 0))
         self._status_var = tk.StringVar(value="Ready.")
         ttk.Label(bot, textvariable=self._status_var, foreground="grey").pack(
             side="left", padx=(12, 0))
@@ -346,6 +348,7 @@ class EncoderCompWriterApp(tk.Tk):
         state = "normal" if enabled else "disabled"
         self._write_btn.configure(state=state)
         self._readback_btn.configure(state=state)
+        self._wipe_btn.configure(state=state)
 
     def _scalar(self) -> float:
         try:
@@ -450,6 +453,76 @@ class EncoderCompWriterApp(tk.Tk):
             self._set_buttons(True),
             self._progress_var.set(100.0),
             self._status_var.set("Done — LUT written and stored."),
+        ))
+
+    # ── Wipe sequence ─────────────────────────────────────────────────────────
+    def _start_wipe(self) -> None:
+        drive = self._drive_var.get()
+        side  = self._side_var.get()
+
+        if not messagebox.askyesno(
+            "Confirm Wipe",
+            f"Write all zeros to the {side}-side LUT on drive '{drive}'?\n"
+            "This will overwrite existing compensation values.",
+        ):
+            return
+
+        self._set_buttons(False)
+        self._progress_var.set(0.0)
+        self._progress_lbl.configure(text="")
+        self._status_var.set("Connecting…")
+
+        threading.Thread(
+            target=self._wipe_worker,
+            args=(drive, side),
+            daemon=True,
+        ).start()
+
+    def _wipe_worker(self, drive: str, side: str) -> None:
+        try:
+            sdo = _get_sdo()
+        except Exception as exc:
+            self.after(0, lambda e=str(exc): messagebox.showerror("ROS2 unavailable", e))
+            self.after(0, lambda: self._set_buttons(True))
+            self.after(0, lambda: self._status_var.set("Ready."))
+            return
+
+        if side == "input":
+            idx_obj = _INPUT_IDX
+            val_obj = _INPUT_VAL
+            en_obj  = _INPUT_EN
+        else:
+            idx_obj = _OUTPUT_IDX
+            val_obj = _OUTPUT_VAL
+            en_obj  = _OUTPUT_EN
+
+        self.after(0, lambda: self._status_var.set("Wiping…"))
+
+        def _update(msg: str = "") -> None:
+            pct = 100.0 * entries_done / (_LUT_SIZE + 1)
+            self.after(0, lambda p=pct: self._progress_var.set(p))
+            self.after(0, lambda d=entries_done:
+                       self._progress_lbl.configure(
+                           text=f"{d} / {_LUT_SIZE} entries wiped"))
+            if msg:
+                self.after(0, lambda m=msg: self._status_var.set(m))
+
+        entries_done = 0
+        for i in range(_LUT_SIZE):
+            sdo.write_sync(drive, idx_obj, _SUBINDEX, _SIZE_BYTES, i)
+            sdo.write_sync(drive, val_obj, _SUBINDEX, _SIZE_BYTES, 0)
+            entries_done += 1
+            _update()
+
+        _update(f"Enabling {side}-side compensation…")
+        sdo.write_sync(drive, en_obj, _SUBINDEX, _SIZE_BYTES, 1)
+        entries_done += 1
+        _update()
+
+        self.after(0, lambda: (
+            self._set_buttons(True),
+            self._progress_var.set(100.0),
+            self._status_var.set("Done — LUT wiped (all zeros)."),
         ))
 
     # ── Readback sequence ─────────────────────────────────────────────────────
