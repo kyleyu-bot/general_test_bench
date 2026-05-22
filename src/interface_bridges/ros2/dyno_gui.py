@@ -1165,6 +1165,9 @@ class SliderSlot(QGroupBox):
                 for w in (self._min_spin, self._max_spin,
                           self._slider, self._exact_spin):
                     w.blockSignals(False)
+                if self._on_user_changed and hi_i != lo_i:
+                    norm = (def_i - lo_i) / (hi_i - lo_i)
+                    self._on_user_changed(max(0.0, min(1.0, norm)))
         ev.acceptProposedAction()
 
     def contextMenuEvent(self, ev):
