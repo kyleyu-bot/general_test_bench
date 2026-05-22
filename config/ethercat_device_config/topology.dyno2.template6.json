@@ -5,7 +5,7 @@
   "slaves": [
     {
       "name": "main_drive",
-      "position": 6,
+      "position": 5,
       "kind": "volcano",
       "alias_address": 3000,
       "vendor_id": 668,
@@ -103,7 +103,7 @@
     },
     {
       "name": "dut",
-      "position": 5,
+      "position": 6,
       "kind": "volcano",
       "optional": true,
       "vendor_id": 668,

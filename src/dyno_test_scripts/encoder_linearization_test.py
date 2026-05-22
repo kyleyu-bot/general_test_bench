@@ -21,7 +21,7 @@ input_speed_rev_s : float
     Input-side rotation speed magnitude (rev/s). Default 1.0.
 target_output_revs : float
     Number of output-side revolutions to accumulate in each direction before
-    stopping. Default 4.0.
+    stopping. Default 6.0.
 timeout_s : float
     Per-direction safety timeout (s) — exits early if the target is not reached.
     Default 300.
@@ -71,7 +71,7 @@ def _post_process(script_file: str, drive: str) -> None:
 PARAMS = {
     "drive":               ["main", "dut"],
     "input_speed_rev_s":   1.0,
-    "target_output_revs":  4.0,
+    "target_output_revs":  6.0,
     "timeout_s":           300.0,
 }
 
