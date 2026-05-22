@@ -444,10 +444,10 @@ class EncoderCompWriterApp(tk.Tk):
         entries_done += 1
         _update()
 
-        # time.sleep(1.0)
-        # _update("Storing to non-volatile memory…")
-        # sdo.store_all(drive)
-        # time.sleep(2.0)
+        time.sleep(1.0)
+        _update("Storing to non-volatile memory…")
+        sdo.store_all(drive)
+        time.sleep(5.0)
 
         self.after(0, lambda: (
             self._set_buttons(True),
@@ -518,6 +518,11 @@ class EncoderCompWriterApp(tk.Tk):
         sdo.write_sync(drive, en_obj, _SUBINDEX, _SIZE_BYTES, 1)
         entries_done += 1
         _update()
+
+        time.sleep(1.0)
+        _update("Storing to non-volatile memory…")
+        sdo.store_all(drive)
+        time.sleep(5.0)
 
         self.after(0, lambda: (
             self._set_buttons(True),

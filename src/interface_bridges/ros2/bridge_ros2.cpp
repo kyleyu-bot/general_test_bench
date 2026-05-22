@@ -782,10 +782,11 @@ int main(int argc, char** argv) {
                     node->publishSdoResponse(resp);
 
                 } else if (req.is_store_all) {
-                    // ── Store All: pre-op → write 0x26DB → return to OP ─────
+                    // ── Store All: pre-op → write 0x1010:01 → return to OP ─────
                     SdoResponse resp;
-                    resp.op    = "store_all";
-                    resp.index = 0x26DB;
+                    resp.op       = "store_all";
+                    resp.index    = 0x1010;
+                    resp.subindex = 0x01;
                     safe_stop();
                     ec_slave[0].state = EC_STATE_PRE_OP;
                     ec_writestate(0);
@@ -802,12 +803,14 @@ int main(int argc, char** argv) {
                         uint32_t magic = 0x65766173u; // "evas" — DS301 save password
                         uint8_t  buf[4];
                         std::memcpy(buf, &magic, 4);
+                        // int rc = ec_SDOwrite(static_cast<uint16_t>(req.slave_idx),
+                        //                      0x26DB, 0x00, FALSE, 4, buf, SDO_TIMEOUT_US);
                         int rc = ec_SDOwrite(static_cast<uint16_t>(req.slave_idx),
-                                             0x26DB, 0x00, FALSE, 4, buf, SDO_TIMEOUT_US);
+                                             0x1010, 0x01, FALSE, 4, buf, SDO_TIMEOUT_US);
                         resp.success = (rc > 0);
                         resp.value   = magic;
                         if (!resp.success)
-                            resp.error = "ec_SDOwrite 0x26DB failed (rc="
+                            resp.error = "ec_SDOwrite 0x1010:01 failed (rc="
                                          + std::to_string(rc) + ")";
                     }
                     // Return to OP regardless of SDO result, but report if recovery fails.

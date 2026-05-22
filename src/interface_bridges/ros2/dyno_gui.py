@@ -641,6 +641,10 @@ class DynoCommander(Node):
                 return (-max_current, max_current, 0.0)
             return (-CURRENT_COMMAND_FALLBACK_LIMIT_A,
                     CURRENT_COMMAND_FALLBACK_LIMIT_A, 0.0)
+        elif field_type == "torque":
+            max_torque = limits.get("torque_max", 0.0)
+            if max_torque > 0.0:
+                return (-max_torque, max_torque, 0.0)
         elif field_type == "torque_min":
             current = limits.get(field_type, 0.0)
             return (-20.0, 0.0, current)   # negative clamp — must allow negative
@@ -851,7 +855,7 @@ class XTouchMidiBridge(QObject):
                     self._out_port.send(mido.Message(
                         'control_change', channel=0,
                         control=i + self.FADER_CC_BASE, value=0))
-            self._midi_mode = None   # re-detect on each fresh connection
+            self._midi_mode = 'cc'   # default; overridden by first incoming message
             self._connected = True
             self._poll_timer = QTimer(self)
             self._poll_timer.timeout.connect(self._poll)
@@ -888,10 +892,7 @@ class XTouchMidiBridge(QObject):
 
     def _process_msg(self, msg):
         if msg.type == 'pitchwheel':
-            if self._midi_mode is None:
-                self._midi_mode = 'pitchwheel'
-            if self._midi_mode != 'pitchwheel':
-                return
+            self._midi_mode = 'pitchwheel'
             if 0 <= msg.channel < self.NUM_FADERS:
                 # Echo back so the motor tracks correctly.
                 if self._out_port:
@@ -907,10 +908,7 @@ class XTouchMidiBridge(QObject):
             cc_hi = self.FADER_CC_BASE + self.NUM_FADERS  # exclusive
             if msg.control < cc_lo or msg.control >= cc_hi:
                 return  # touch sensors (CC 101+) and unrelated CCs — ignore
-            if self._midi_mode is None:
-                self._midi_mode = 'cc'
-            if self._midi_mode != 'cc':
-                return
+            self._midi_mode = 'cc'
             # Echo back — required for the motor to report smooth intermediate values.
             if self._out_port:
                 try:
@@ -1165,6 +1163,9 @@ class SliderSlot(QGroupBox):
                 for w in (self._min_spin, self._max_spin,
                           self._slider, self._exact_spin):
                     w.blockSignals(False)
+                if self._on_user_changed and hi_i != lo_i:
+                    norm = (def_i - lo_i) / (hi_i - lo_i)
+                    self._on_user_changed(max(0.0, min(1.0, norm)))
         ev.acceptProposedAction()
 
     def contextMenuEvent(self, ev):
@@ -1191,6 +1192,8 @@ class SliderSlot(QGroupBox):
             self._on_assigned(key)
 
     def _unassign(self):
+        if self._on_user_changed and self._field is not None:
+            self._on_user_changed(0.0)
         old = self._field
         self._field = None
         self._scale = 1.0
