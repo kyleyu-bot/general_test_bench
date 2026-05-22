@@ -30,22 +30,18 @@ RESAMPLE_PTS_PER_REV = 1 << 20  # 2^20 uniform spatial points per revolution
 
 _DRIVE_COLS = {
     "main": {
-        "velocity":        "main_rx_target_velocity",
-        "enable":          "main_rx_enable",
-        "input":           "main_tx_input_enc_pos",
-        "output":          "main_tx_output_enc_pos",
-        "compensated_pos": "main_tx_compensated_output_position",
-        "outputside_enc":  "main_tx_outputside_encoder_raw",
-        "gear":            "main_gear_ratio",
+        "velocity": "main_rx_target_velocity",
+        "enable": "main_rx_enable",
+        "input": "main_tx_input_enc_pos",
+        "output": "main_tx_output_enc_pos",
+        "gear": "main_gear_ratio",
     },
     "dut": {
-        "velocity":        "dut_rx_target_velocity",
-        "enable":          "dut_rx_enable",
-        "input":           "dut_tx_input_enc_pos",
-        "output":          "dut_tx_output_enc_pos",
-        "compensated_pos": "dut_tx_compensated_output_position",
-        "outputside_enc":  "dut_tx_outputside_encoder_raw",
-        "gear":            "dut_gear_ratio",
+        "velocity": "dut_rx_target_velocity",
+        "enable": "dut_rx_enable",
+        "input": "dut_tx_input_enc_pos",
+        "output": "dut_tx_output_enc_pos",
+        "gear": "dut_gear_ratio",
     },
 }
 
@@ -136,24 +132,6 @@ class OutputSideAnalysis:
 
 
 @dataclass
-class CompensationCheckData:
-    """Raw time-domain data for verifying the compensated output position PDO."""
-    time_s: np.ndarray              # seconds from first sample
-    comp_pos_continuous: np.ndarray # unwrapped compensated_output_position_raw (counts, int64)
-    output_enc_pos: np.ndarray      # output_enc_pos_raw_cnt, already continuous (counts, int64)
-    delta: np.ndarray               # comp_pos_continuous − output_enc_pos (counts)
-
-
-@dataclass
-class CompensationCheck3Data:
-    """Time-domain delta between compensated_output_position_raw and outputside_encoder_raw."""
-    time_s: np.ndarray       # seconds from first sample
-    comp_pos_raw: np.ndarray # raw compensated_output_position_raw (counts, int64)
-    outenc2_raw: np.ndarray  # raw outputside_encoder_raw / 0x2051 (counts, int64)
-    delta: np.ndarray        # comp_pos_raw − outenc2_raw (counts)
-
-
-@dataclass
 class EncoderLinearizationResult:
     csv_path: Path
     drive: str
@@ -166,9 +144,6 @@ class EncoderLinearizationResult:
     input_segments: list[tuple[np.ndarray, np.ndarray]] = field(default_factory=list)
     output_segments: list[tuple[np.ndarray, np.ndarray]] = field(default_factory=list)
     output_revolution_count: int = 0
-    comp_check: CompensationCheckData | None = None
-    comp_check_2: OutputSideAnalysis | None = None
-    comp_check_3: CompensationCheck3Data | None = None
 
 
 # -- CSV helpers --------------------------------------------------------------
@@ -750,132 +725,6 @@ def _analyze_output_side(
     )
 
 
-def _unwrap_int32_counts(raw: np.ndarray, counts_per_rev: int = 1 << 20) -> np.ndarray:
-    """Unwrap a wrapping int32 counter to a continuous int64 signal.
-
-    Assumes jumps larger than counts_per_rev/2 between consecutive samples are
-    wrap-arounds, not actual motion — valid as long as the drive never moves more
-    than half a revolution per sample (which is orders of magnitude above any
-    realistic 1 kHz EtherCAT cycle).
-    """
-    raw = np.asarray(raw, dtype=np.int64)
-    half = counts_per_rev >> 1
-    diffs = np.diff(raw)
-    wrapped = ((diffs + half) % counts_per_rev) - half
-    continuous = np.empty(len(raw), dtype=np.int64)
-    continuous[0] = raw[0]
-    continuous[1:] = raw[0] + np.cumsum(wrapped)
-    return continuous
-
-
-def analyze_compensation_check(
-    data: np.ndarray,
-    header: list[str],
-    drive: str,
-) -> CompensationCheckData | None:
-    """
-    Extract compensated_output_position_raw and output_enc_pos for the given drive,
-    unwrap the former from its per-revolution int32 counter, and compute their delta.
-
-    Returns None if the compensated_output_position column is absent (older CSV).
-    """
-    comp_col   = _DRIVE_COLS[drive]["compensated_pos"]
-    output_col = _DRIVE_COLS[drive]["output"]
-
-    if comp_col not in header or output_col not in header:
-        return None
-
-    time_ns = data[:, header.index("stamp_ns")]
-    time_s  = (time_ns - time_ns[0]) / 1e9
-
-    comp_raw        = data[:, header.index(comp_col)].astype(np.int64)
-    comp_continuous = _unwrap_int32_counts(comp_raw, counts_per_rev=1 << 20)
-
-    output_enc = data[:, header.index(output_col)].astype(np.int64)
-
-    delta = comp_continuous - output_enc
-    delta = delta - delta[0]
-
-    return CompensationCheckData(
-        time_s=time_s,
-        comp_pos_continuous=comp_continuous,
-        output_enc_pos=output_enc,
-        delta=delta,
-    )
-
-
-def analyze_comp_check_2(
-    data: np.ndarray,
-    header: list[str],
-    drive: str,
-    active: np.ndarray,
-    lut_size: int,
-    butter_order: int = BUTTER_ORDER,
-    butter_cutoff_cpr: float = BUTTER_CUTOFF_CPR,
-) -> OutputSideAnalysis | None:
-    """
-    Output-side analysis with EL5032 as reference and compensated_output_position_raw
-    as the measurement.  The delta (EL5032 − compensated) shows the residual error
-    after compensation, directly comparable to the Output Analysis tab which uses
-    the raw output encoder as the measurement.
-
-    Returns None if the compensated_pos column is absent from the CSV.
-    """
-    comp_col = _DRIVE_COLS[drive]["compensated_pos"]
-
-    if comp_col not in header or "encoder_count" not in header:
-        return None
-
-    ext_rad_wrapped = _wrap_rad(
-        _counts_to_rad(data[active, header.index("encoder_count")], EXTERNAL_ENCODER_BITS)
-    )
-
-    comp_raw        = data[active, header.index(comp_col)].astype(np.int64)
-    comp_continuous = _unwrap_int32_counts(comp_raw, counts_per_rev=1 << 20)
-    comp_accum_rad  = comp_continuous.astype(float) * TWO_PI / (1 << 20)
-
-    return _analyze_output_side(
-        ext_rad_wrapped,
-        comp_accum_rad,
-        lut_size=lut_size,
-        butter_order=butter_order,
-        butter_cutoff_cpr=butter_cutoff_cpr,
-    )
-
-
-def analyze_comp_check_3(
-    data: np.ndarray,
-    header: list[str],
-    drive: str,
-) -> CompensationCheck3Data | None:
-    """
-    Delta between compensated_output_position_raw (0x2056) and outputside_encoder_raw (0x2051).
-    Both are unwrapped from their 2^20 counts-per-revolution int32 counters.
-
-    Returns None if either column is absent from the CSV.
-    """
-    comp_col    = _DRIVE_COLS[drive]["compensated_pos"]
-    outenc2_col = _DRIVE_COLS[drive]["outputside_enc"]
-
-    if comp_col not in header or outenc2_col not in header:
-        return None
-
-    time_ns = data[:, header.index("stamp_ns")]
-    time_s  = (time_ns - time_ns[0]) / 1e9
-
-    comp_raw    = data[:, header.index(comp_col)].astype(np.int64)
-    outenc2_raw = data[:, header.index(outenc2_col)].astype(np.int64)
-
-    delta = comp_raw - outenc2_raw
-
-    return CompensationCheck3Data(
-        time_s=time_s,
-        comp_pos_raw=comp_raw,
-        outenc2_raw=outenc2_raw,
-        delta=delta,
-    )
-
-
 def analyze_encoder_linearization(
     log_folder: str | Path,
     drive: str = "main",
@@ -929,15 +778,6 @@ def analyze_encoder_linearization(
         butter_cutoff_cpr=butter_cutoff_cpr,
     )
 
-    comp_check = analyze_compensation_check(data, header, drive)
-    comp_check_2 = analyze_comp_check_2(
-        data, header, drive, active,
-        lut_size=lut_size,
-        butter_order=butter_order,
-        butter_cutoff_cpr=butter_cutoff_cpr,
-    )
-    comp_check_3 = analyze_comp_check_3(data, header, drive)
-
     return EncoderLinearizationResult(
         csv_path=csv_path,
         drive=drive,
@@ -950,9 +790,6 @@ def analyze_encoder_linearization(
         input_segments=input_segs,
         output_segments=[],
         output_revolution_count=output_side.revolution_count,
-        comp_check=comp_check,
-        comp_check_2=comp_check_2,
-        comp_check_3=comp_check_3,
     )
 
 
@@ -1109,20 +946,27 @@ def make_output_segment_debug_figure(result: EncoderLinearizationResult) -> Figu
     )
 
 
-def _build_output_side_figure(
-    out: OutputSideAnalysis,
-    drive: str,
-    lut_size: int,
-    rev_count: int,
-    title_prefix: str,
-    x_label: str,
-) -> Figure:
-    """Shared renderer for any OutputSideAnalysis — called by both output-analysis figures."""
+def make_output_analysis_figure(result: EncoderLinearizationResult):
+    """
+    Interactive output-side analysis figure (use with matplotlib.pyplot.show()).
+
+    Single axis showing:
+      - scatter: raw delta vs ext angle (all segments, decimated)
+      - scatter: filtered delta vs ext angle (all segments, decimated)
+      - 4 horizontal dashed lines: min/max of raw and filtered delta
+      - 2 horizontal dotted lines: RSS of raw and filtered delta
+      - line: average_delta (decimated)
+      - line: LUT
+    """
+    out = result.output_side
+    lut_size = result.lut_size
+
     fig = Figure(figsize=(14, 7), tight_layout=True)
     ax = fig.add_subplot(1, 1, 1)
 
-    S = 1e3  # rad → mrad
+    S = 1e3  # rad → mrad scale factor
 
+    # Decimate scatter to at most 50k pts each
     x_raw, d_raw   = _decimated_xy(out.x_rad, out.delta_raw, max_points=50_000)
     x_filt, d_filt = _decimated_xy(out.x_rad, out.delta_rad, max_points=50_000)
 
@@ -1131,6 +975,7 @@ def _build_output_side_figure(
     ax.scatter(x_filt, d_filt * S, s=8, alpha=1.0, linewidths=0,
                color="steelblue", label="filtered delta")
 
+    # 4 horizontal dashed lines: raw & filtered min/max
     ax.axhline(out.delta_raw_min      * S, color="dimgray",    linestyle="--", linewidth=2.0,
                label=f"raw min {out.delta_raw_min * S:.3f}")
     ax.axhline(out.delta_raw_max      * S, color="dimgray",    linestyle="--", linewidth=2.0,
@@ -1140,194 +985,35 @@ def _build_output_side_figure(
     ax.axhline(out.delta_filtered_max * S, color="dodgerblue", linestyle="--", linewidth=2.0,
                label=f"filt max {out.delta_filtered_max * S:.3f}")
 
+    # 2 horizontal dotted lines: RMS
     ax.axhline(out.delta_raw_rms      * S, color="dimgray",    linestyle=":",  linewidth=2.2,
                label=f"raw RMS {out.delta_raw_rms * S:.3f}")
     ax.axhline(out.delta_filtered_rms * S, color="dodgerblue", linestyle=":",  linewidth=2.2,
                label=f"filt RMS {out.delta_filtered_rms * S:.3f}")
 
+    # Average delta (decimated from 2^20 to ≤25k pts)
     avg_x, avg_y = _decimated_xy(out.average_delta_phase, out.average_delta, max_points=25_000)
     ax.plot(avg_x, avg_y * S, color="darkorange", linewidth=1.4, label="avg delta")
 
+    # LUT
     ax.plot(out.lut_phase_rad, out.lut_delta_rad * S, color="tab:red", linewidth=1.6,
             label=f"LUT ({lut_size})")
 
-    raw_pp  = (out.delta_raw_max - out.delta_raw_min) * S
-    filt_pp = (out.delta_filtered_max - out.delta_filtered_min) * S
+    raw_pp   = (out.delta_raw_max   - out.delta_raw_min)   * S
+    filt_pp  = (out.delta_filtered_max - out.delta_filtered_min) * S
     ax.set_title(
-        f"{title_prefix} — {drive}  |  "
+        f"Output side — {result.drive}  |  "
         f"raw p-p {raw_pp:.3f} mrad  filtered p-p {filt_pp:.3f} mrad  |  "
         f"raw RMS {out.delta_raw_rms * S:.3f} mrad  filt RMS {out.delta_filtered_rms * S:.3f} mrad  |  "
-        f"{rev_count} revs"
+        f"{result.output_revolution_count} revs"
     )
-    ax.set_xlabel(x_label)
+    ax.set_xlabel("Actuator output encoder angle (rad)")
     ax.set_ylabel("Delta (mrad)")
     ax.set_xlim(0.0, TWO_PI)
     ax.xaxis.set_major_locator(MultipleLocator(np.pi / 2))
     ax.legend(fontsize=8, loc="upper right", markerscale=4)
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    return fig
-
-
-def make_output_analysis_figure(result: EncoderLinearizationResult) -> Figure:
-    """
-    Output-side analysis figure: EL5032 external encoder vs actuator output encoder.
-
-    Single axis showing raw/filtered delta scatter, min/max/RMS reference lines,
-    spatial average, and LUT.
-    """
-    return _build_output_side_figure(
-        result.output_side,
-        drive=result.drive,
-        lut_size=result.lut_size,
-        rev_count=result.output_revolution_count,
-        title_prefix="Output side",
-        x_label="Actuator output encoder angle (rad)",
-    )
-
-
-def make_compensation_check_figure(result: EncoderLinearizationResult) -> Figure:
-    """
-    3-subplot time-domain figure for verifying compensated_output_position_raw:
-      1. Continuous (unwrapped) compensated_output_position_raw in counts
-      2. output_enc_pos_raw_cnt in counts
-      3. Delta between the two (compensated − output_enc)
-    """
-    fig = Figure(figsize=(14, 9), tight_layout=True)
-
-    if result.comp_check is None:
-        ax = fig.add_subplot(1, 1, 1)
-        ax.text(0.5, 0.5,
-                "compensated_output_position data not available\n"
-                "(column missing from CSV — re-run with updated firmware and bridge)",
-                ha="center", va="center", transform=ax.transAxes, fontsize=12)
-        ax.set_axis_off()
-        return fig
-
-    cd = result.comp_check
-    max_pts = 50_000
-    step = max(1, len(cd.time_s) // max_pts)
-    t  = cd.time_s[::step]
-    cp = cd.comp_pos_continuous[::step]
-    op = cd.output_enc_pos[::step]
-    dv = cd.delta[::step]
-
-    delta_min = int(cd.delta.min())
-    delta_max = int(cd.delta.max())
-    delta_rng = delta_max - delta_min
-
-    ax1 = fig.add_subplot(3, 1, 1)
-    ax1.plot(t, cp, linewidth=0.8, color="tab:blue")
-    ax1.set_ylabel("counts")
-    ax1.set_title("compensated_output_position_raw — continuous (unwrapped, 2²⁰ counts/rev)")
-    ax1.grid(True, alpha=0.3)
-
-    ax2 = fig.add_subplot(3, 1, 2, sharex=ax1)
-    ax2.plot(t, op, linewidth=0.8, color="tab:orange")
-    ax2.set_ylabel("counts")
-    ax2.set_title("output_enc_pos_raw_cnt — continuous")
-    ax2.grid(True, alpha=0.3)
-
-    ax3 = fig.add_subplot(3, 1, 3, sharex=ax1)
-    ax3.plot(t, dv, linewidth=0.8, color="tab:green")
-    ax3.set_ylabel("counts")
-    ax3.set_xlabel("Time (s)")
-    ax3.set_title(
-        f"Delta (compensated − output_enc)  "
-        f"[{delta_min:+d} … {delta_max:+d}] counts  range {delta_rng} counts"
-    )
-    ax3.grid(True, alpha=0.3)
-
-    fig.suptitle(
-        f"Compensation Check — {result.drive}  |  "
-        f"delta range {delta_rng} counts  ({len(cd.time_s)} samples)",
-        fontsize=12,
-    )
-    return fig
-
-
-def make_comp_check_2_figure(result: EncoderLinearizationResult) -> Figure:
-    """
-    Output-side analysis: EL5032 as reference, compensated_output_position_raw
-    as the measurement.  Identical layout to make_output_analysis_figure — directly
-    comparable to it to assess how much compensation reduces the residual error.
-    """
-    if result.comp_check_2 is None:
-        fig = Figure(figsize=(14, 7), tight_layout=True)
-        ax = fig.add_subplot(1, 1, 1)
-        ax.text(0.5, 0.5,
-                "Compensation Check 2 data not available\n"
-                "(compensated_output_position column missing from CSV)",
-                ha="center", va="center", transform=ax.transAxes, fontsize=12)
-        ax.set_axis_off()
-        return fig
-
-    return _build_output_side_figure(
-        result.comp_check_2,
-        drive=result.drive,
-        lut_size=result.lut_size,
-        rev_count=result.comp_check_2.revolution_count,
-        title_prefix="Compensation Check 2",
-        x_label="EL5032 external encoder angle (rad)",
-    )
-
-
-def make_comp_check_3_figure(result: EncoderLinearizationResult) -> Figure:
-    """
-    3-subplot time-domain figure showing the delta between
-    compensated_output_position_raw (0x2056) and outputside_encoder_raw (0x2051).
-    """
-    fig = Figure(figsize=(14, 9), tight_layout=True)
-
-    if result.comp_check_3 is None:
-        ax = fig.add_subplot(1, 1, 1)
-        ax.text(0.5, 0.5,
-                "Compensation Check 3 data not available\n"
-                "(compensated_output_position or outputside_encoder_raw column missing from CSV\n"
-                " — re-run with updated firmware and bridge)",
-                ha="center", va="center", transform=ax.transAxes, fontsize=12)
-        ax.set_axis_off()
-        return fig
-
-    cd = result.comp_check_3
-    max_pts = 50_000
-    step = max(1, len(cd.time_s) // max_pts)
-    t    = cd.time_s[::step]
-    cp   = cd.comp_pos_raw[::step]
-    enc2 = cd.outenc2_raw[::step]
-    dv   = cd.delta[::step]
-
-    delta_min = int(cd.delta.min())
-    delta_max = int(cd.delta.max())
-    delta_rng = delta_max - delta_min
-
-    ax1 = fig.add_subplot(3, 1, 1)
-    ax1.plot(t, cp, linewidth=0.8, color="tab:blue")
-    ax1.set_ylabel("counts")
-    ax1.set_title("compensated_output_position_raw (0x2056) — raw")
-    ax1.grid(True, alpha=0.3)
-
-    ax2 = fig.add_subplot(3, 1, 2, sharex=ax1)
-    ax2.plot(t, enc2, linewidth=0.8, color="tab:orange")
-    ax2.set_ylabel("counts")
-    ax2.set_title("outputside_encoder_raw (0x2051) — raw")
-    ax2.grid(True, alpha=0.3)
-
-    ax3 = fig.add_subplot(3, 1, 3, sharex=ax1)
-    ax3.plot(t, dv, linewidth=0.8, color="tab:green")
-    ax3.set_ylabel("counts")
-    ax3.set_xlabel("Time (s)")
-    ax3.set_title(
-        f"Delta (compensated_output_position_raw − outputside_encoder_raw)  "
-        f"[{delta_min:+d} … {delta_max:+d}] counts  range {delta_rng} counts"
-    )
-    ax3.grid(True, alpha=0.3)
-
-    fig.suptitle(
-        f"Compensation Check 3 — {result.drive}  |  "
-        f"delta range {delta_rng} counts  ({len(cd.time_s)} samples)",
-        fontsize=12,
-    )
     return fig
 
 

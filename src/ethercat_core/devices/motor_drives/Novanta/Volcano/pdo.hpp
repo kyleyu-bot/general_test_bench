@@ -8,11 +8,11 @@
 //   0x1601: 0x2527(F32), 0x2528(F32), 0x250A(F32), 0x250B(F32),
 //           0x250C(F32), 0x2511(F32), 0x2512(F32), 0x2513(F32)
 //
-// TX PDO (drive → master), 57 bytes, format "<HbifffHiifffffffffff":
-//   0x1A00: 0x6041(U16), 0x6061(S8), 0x6064(S32), 0x2051(S32),
-//           0x2064(F32), 0x2063(F32), 0x603F(U16)
-//   0x1A01: 0x606C(S32), 0x204A(S32), 0x2065(F32), 0x2079(F32),
-//           0x203B(F32), 0x2056(S32), 0x2061(F32)
+// TX PDO (drive → master), 55 bytes, format "<HbifhfHiiiffffff":
+//   0x1A00: 0x6041(U16), 0x6061(S8), 0x6064(S32), 0x2060(F32),
+//           0x6077(S16), 0x2063(F32), 0x603F(U16)
+//   0x1A01: 0x606C(S32), 0x204A(S32), 0x2078(S32), 0x2079(F32),
+//           0x203B(F32), 0x203C(F32), 0x2076(F32)
 //   0x1A02: 0x2072(F32), 0x2073(F32)
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -24,7 +24,7 @@
 namespace ethercat_core::novanta::volcano {
 
 static constexpr int RX_PDO_SIZE        = 55;
-static constexpr int TX_PDO_SIZE        = 57;
+static constexpr int TX_PDO_SIZE        = 55;
 static constexpr int LEGACY_TX_PDO_SIZE = 16;
 
 struct PdoScaling {
@@ -58,17 +58,17 @@ struct TxPdo {
     uint16_t statusword;          // 0x6041
     int8_t   mode_display;        // 0x6061
     int32_t  measured_output_encoder_position_raw;    // 0x6064, output side encoder
-    int32_t  outputside_encoder_raw;  // 0x2051, secondary absolute encoder
-    float    power_stage_temp_2;  // 0x2064
+    float    bus_voltage;         // 0x2060
+    int16_t  estimated_torque;    // 0x6077
     float    motor_temp;          // 0x2063
     uint16_t error_code;          // 0x603F
     int32_t  motor_velocity;      // 0x606C
     int32_t  input_encoder_pos;   // 0x204A
-    float    motor_temp_2;        // 0x2065
+    int32_t  position_setpoint;   // 0x2078
     float    velocity_setpoint;   // 0x2079
-    float    iq_actual;                    // 0x203B
-    int32_t  compensated_output_position; // 0x2056
-    float    power_stage_temp_1;  // 0x2061
+    float    iq_actual;           // 0x203B
+    float    id_actual;           // 0x203C
+    float    idc_actual;          // 0x2076
     float    iq_command;          // 0x2072
     float    id_command;          // 0x2073
 };

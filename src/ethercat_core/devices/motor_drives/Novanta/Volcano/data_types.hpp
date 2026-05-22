@@ -51,21 +51,20 @@ struct DriveStatus {
     bool            remote              = false;
     bool            target_reached      = false;
 
-    float           power_stage_temp_2          = 0.0f;  // 0x2064
+    float           measured_torque_nm          = 0.0f;
     int32_t         measured_input_side_velocity_raw  = 0;    // 0x606C, unit: mrev/s
     int32_t         measured_output_side_position_raw_cnt = 0; // 0x6064, output side encoder
     int32_t         input_encoder_pos            = 0;  // 0x204A, input side encoder
     float           velocity_command_received    = 0.0f;
-    float           motor_temp_2                = 0.0f;  // 0x2065
+    int32_t         position_setpoint            = 0;
     int32_t         max_position                 = 0;
     int32_t         min_position                 = 0;
     float           max_velocity_abs             = 0.0f;
-    int32_t         outputside_encoder_raw       = 0;     // 0x2051, secondary absolute encoder
+    float           bus_voltage                  = 0.0f;
     float           motor_temp                   = 0.0f;
-    float           iq_actual                          = 0.0f;
-    int32_t         compensated_output_position_raw    = 0;     // 0x2056, raw encoder counts
-    float           compensated_output_position_rad    = 0.0f;  // 0x2056 * π/2^19
-    float           power_stage_temp_1           = 0.0f;  // 0x2061
+    float           iq_actual                    = 0.0f;
+    float           id_actual                    = 0.0f;
+    float           idc_actual                   = 0.0f;
     float           iq_command                   = 0.0f;
     float           id_command                   = 0.0f;
 

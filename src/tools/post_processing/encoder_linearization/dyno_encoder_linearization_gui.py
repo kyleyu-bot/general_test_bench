@@ -25,9 +25,6 @@ from dyno_encoder_linearization_analysis import (
     _DRIVE_COLS,
     _latest_log,
     analyze_encoder_linearization,
-    make_compensation_check_figure,
-    make_comp_check_2_figure,
-    make_comp_check_3_figure,
     make_encoder_linearization_figure,
     make_output_analysis_figure,
     save_encoder_subplots,
@@ -44,9 +41,6 @@ class DynoEncoderLinearizationApp(tk.Tk):
         self._result = None
         self._output_fig = None
         self._full_fig = None
-        self._comp_check_fig = None
-        self._comp_check_2_fig = None
-        self._comp_check_3_fig = None
         self._full_axes_info: list[tuple] = []
         self._canvases: dict[str, FigureCanvasTkAgg] = {}
         self._toolbars: dict[str, NavigationToolbar2Tk] = {}
@@ -107,14 +101,8 @@ class DynoEncoderLinearizationApp(tk.Tk):
         self._notebook.pack(fill="both", expand=True, padx=10, pady=10)
         self._tab_output = ttk.Frame(self._notebook)
         self._tab_full = ttk.Frame(self._notebook)
-        self._tab_comp_check = ttk.Frame(self._notebook)
-        self._tab_comp_check_2 = ttk.Frame(self._notebook)
-        self._tab_comp_check_3 = ttk.Frame(self._notebook)
         self._notebook.add(self._tab_output, text="Output Analysis")
         self._notebook.add(self._tab_full, text="Full Analysis")
-        self._notebook.add(self._tab_comp_check, text="Compensation Check")
-        self._notebook.add(self._tab_comp_check_2, text="Compensation Check 2")
-        self._notebook.add(self._tab_comp_check_3, text="Compensation Check 3")
 
     def _browse(self):
         path = filedialog.askdirectory(title="Select run folder (contains dyno_pdo.csv)")
@@ -157,9 +145,6 @@ class DynoEncoderLinearizationApp(tk.Tk):
             )
             fig_output = make_output_analysis_figure(result)
             fig_full, axes_info = make_encoder_linearization_figure(result)
-            fig_comp_check = make_compensation_check_figure(result)
-            fig_comp_check_2 = make_comp_check_2_figure(result)
-            fig_comp_check_3 = make_comp_check_3_figure(result)
         except Exception as exc:
             messagebox.showerror("Encoder linearization failed", str(exc))
             return
@@ -167,15 +152,9 @@ class DynoEncoderLinearizationApp(tk.Tk):
         self._result = result
         self._output_fig = fig_output
         self._full_fig = fig_full
-        self._comp_check_fig = fig_comp_check
-        self._comp_check_2_fig = fig_comp_check_2
-        self._comp_check_3_fig = fig_comp_check_3
         self._full_axes_info = axes_info
-        self._embed(fig_output,       self._tab_output,       "output")
-        self._embed(fig_full,         self._tab_full,         "full")
-        self._embed(fig_comp_check,   self._tab_comp_check,   "comp_check")
-        self._embed(fig_comp_check_2, self._tab_comp_check_2, "comp_check_2")
-        self._embed(fig_comp_check_3, self._tab_comp_check_3, "comp_check_3")
+        self._embed(fig_output, self._tab_output, "output")
+        self._embed(fig_full,   self._tab_full,   "full")
         self._notebook.select(0)
         self._save_btn.configure(state="normal")
         self.status_var.set(
