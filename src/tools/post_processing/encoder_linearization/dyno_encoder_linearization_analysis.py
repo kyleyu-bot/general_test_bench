@@ -27,6 +27,7 @@ _VEL_THRESHOLD_FRAC = 0.05
 BUTTER_ORDER = 4
 BUTTER_CUTOFF_CPR = 300.0       # default low-pass cutoff in cycles per revolution
 RESAMPLE_PTS_PER_REV = 1 << 20  # 2^20 uniform spatial points per revolution
+OUTPUT_REV_MIN_PHASE_COVERAGE = 0.95
 
 _DRIVE_COLS = {
     "main": {
@@ -577,6 +578,9 @@ def _resection_output(
     encoder returns to its starting angle — are handled correctly.
     Spatial binning (not np.interp) handles non-monotonic data within each window.
 
+    Candidate revolution windows must span at least OUTPUT_REV_MIN_PHASE_COVERAGE
+    of a full turn before empty bins are filled.
+
     Returns (ext_wrapped_all, raw_aligned_all, filt_aligned_all, resampled_filt_segs).
     """
     k_min = int(np.floor(np.min(ext_continuous) / TWO_PI))
@@ -588,13 +592,17 @@ def _resection_output(
     filt_list:     list[np.ndarray] = []
     resampled:     list[np.ndarray] = []
 
-    for k in range(k_min, k_max):
+    for k in range(k_min, k_max + 1):
         lo = k * TWO_PI
         hi = (k + 1) * TWO_PI
         mask = (ext_continuous >= lo) & (ext_continuous < hi)
         if np.count_nonzero(mask) < _MIN_INPUT_SEGMENT_SAMPLES:
             continue
         ext_norm = ext_continuous[mask] - lo   # [0, 2π)
+        phase_coverage = float((np.max(ext_norm) - np.min(ext_norm)) / TWO_PI)
+        if phase_coverage < OUTPUT_REV_MIN_PHASE_COVERAGE:
+            continue
+
         raw_seg  = delta_raw[mask]
         filt_seg = delta_filtered[mask]
 
@@ -624,10 +632,14 @@ def _resection_output(
         if not np.all(valid):
             seg_mean = _fill_empty_bins(uniform_phase, seg_mean, valid)
 
+        seg_mean -= float(np.mean(seg_mean))
         resampled.append(seg_mean)
 
     if not ext_wrap_list:
-        raise ValueError("No complete output-side revolutions found in the active data.")
+        raise ValueError(
+            "No complete output-side revolutions found in the active data "
+            f"(minimum phase coverage {OUTPUT_REV_MIN_PHASE_COVERAGE:.0%})."
+        )
 
     return (
         np.concatenate(ext_wrap_list),
