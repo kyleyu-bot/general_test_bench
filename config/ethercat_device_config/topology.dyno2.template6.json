@@ -103,10 +103,10 @@
     },
     {
       "name": "dut",
-      "position": 6,
       "kind": "volcano",
       "optional": true,
       "vendor_id": 668,
+      "exclude_alias_address": 3000,
       "scaling": {
         "output_encoder_res_bits": 20,
         "input_encoder_res_bits": 20

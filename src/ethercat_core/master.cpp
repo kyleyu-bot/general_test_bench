@@ -52,6 +52,7 @@ MasterConfig loadTopology(const std::string& path) {
         sc.name          = entry.at("name").get<std::string>();
         sc.position      = entry.value("position", -1);
         sc.alias_address = static_cast<uint16_t>(entry.value("alias_address", 0));
+        sc.exclude_alias_address = static_cast<uint16_t>(entry.value("exclude_alias_address", 0));
         sc.kind          = entry.at("kind").get<std::string>();
         sc.vendor_id     = entry.value("vendor_id",   0u);
         sc.product_code  = entry.value("product_code", 0u);
@@ -301,12 +302,14 @@ int EthercatMaster::resolvePosition(const SlaveConfig& cfg) {
         bool product_ok = !cfg.product_code || static_cast<uint32_t>(sl.eep_id)  == cfg.product_code;
         if (vendor_ok && product_ok) return cfg.position;
     }
-    // Fall back: scan all slaves by vendor + product.
+    // Fall back: scan all slaves by vendor + product, excluding any with the specified alias.
     for (int i = 1; i <= ec_slavecount; ++i) {
         const auto& sl = ec_slave[i];
         bool vendor_ok  = !cfg.vendor_id    || static_cast<uint32_t>(sl.eep_man) == cfg.vendor_id;
         bool product_ok = !cfg.product_code || static_cast<uint32_t>(sl.eep_id)  == cfg.product_code;
-        if (vendor_ok && product_ok) return i - 1;
+        bool alias_ok   = !cfg.exclude_alias_address ||
+                          static_cast<uint16_t>(sl.aliasadr) != cfg.exclude_alias_address;
+        if (vendor_ok && product_ok && alias_ok) return i - 1;
     }
     std::ostringstream oss;
     oss << std::hex << "No slave matched '" << cfg.name << "' "
