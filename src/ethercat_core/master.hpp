@@ -29,6 +29,7 @@ struct SlaveConfig {
     std::string               name;
     int                       position      = -1;   // 0-based; -1 = auto-discover
     uint16_t                  alias_address = 0;    // EtherCAT alias (0 = not used for matching)
+    uint16_t                  exclude_alias_address = 0;  // if non-zero, skip any slave with this alias in fallback scan
     std::string               kind;
     uint32_t                  vendor_id     = 0;
     uint32_t                  product_code  = 0;
