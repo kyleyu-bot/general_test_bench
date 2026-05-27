@@ -2,11 +2,12 @@
 
 // Novanta Volcano PDO layout
 // ──────────────────────────────────────────────────────────────────────────
-// RX PDO (master → drive), 55 bytes, format "<Hbiifffffffffff":
+// RX PDO (master → drive), 59 bytes, format "<Hbiiffffffffffffffff":
 //   0x1600: 0x6040(U16), 0x6060(S8),  0x607A(S32), 0x60FF(S32),
 //           0x2022(F32), 0x201A(F32), 0x2523(F32)
 //   0x1601: 0x2527(F32), 0x2528(F32), 0x250A(F32), 0x250B(F32),
 //           0x250C(F32), 0x2511(F32), 0x2512(F32), 0x2513(F32)
+//   0x1602: 0x201A(F32)
 //
 // TX PDO (drive → master), 55 bytes, format "<HbifhfHiiiffffff":
 //   0x1A00: 0x6041(U16), 0x6061(S8), 0x6064(S32), 0x2060(F32),
@@ -23,7 +24,7 @@
 
 namespace ethercat_core::novanta::volcano {
 
-static constexpr int RX_PDO_SIZE        = 55;
+static constexpr int RX_PDO_SIZE        = 59;
 static constexpr int TX_PDO_SIZE        = 55;
 static constexpr int LEGACY_TX_PDO_SIZE = 16;
 
@@ -51,6 +52,7 @@ struct RxPdo {
     float    position_loop_kp;       // 0x2511
     float    position_loop_ki;       // 0x2512
     float    position_loop_kd;       // 0x2513
+    float    iq_setpoint_1602;       // 0x201A via 0x1602
 };
 static_assert(sizeof(RxPdo) == RX_PDO_SIZE, "RxPdo size mismatch");
 
