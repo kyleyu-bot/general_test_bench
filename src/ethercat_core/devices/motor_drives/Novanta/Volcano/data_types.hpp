@@ -16,9 +16,11 @@ struct Command {
     float           torque_command_2022    = 0.0f;  // 0x2022 direct torque
     float           iq_setpoint_a              = 0.0f;  // 0x201A current quadrature set-point
     float           dahl_friction_comp_enable      = 0.0f;  // 0x202A dahl friction compensation enable (0–1)
-    // float           dahl_friction_comp_gain         = 0.0f;  // 0x202B dahl friction compensation gain (>0)
+    float           dahl_friction_comp_gain         = 0.05f; // 0x202B dahl friction compensation gain (>0)
     uint16_t        dahl_friction_comp_pos_cutoff   = 0;     // 0x202C dahl friction compensation position cutoff (cnt)
+    float           dahl_coulomb_force              = 0.05f; // 0x202D dahl coulomb force (>0)
     float           linear_damping_comp_enable       = 0.0f;  // 0x202E linear damping compensation enable
+    float           linear_damping_comp_gain        = 0.05f; // 0x202F linear damping compensation gain (>0)
     float           torque_kp              = 0.0f;  // 0x2523
     float           torque_loop_max_output = 0.0f;  // 0x2527
     float           torque_loop_min_output = 0.0f;  // 0x2528

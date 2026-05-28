@@ -110,15 +110,19 @@ struct CommandState {
     float    dut_fg_chirp_f_low   = 0.1f;
     float    dut_fg_chirp_f_high  = 10.0f;
     float    dut_fg_chirp_dur     = 10.0f;
-    // Dahl friction compensation (0x202A–0x202D via 0x1602)
-    float    main_dahl_enable       = 0.0f;
-    // float    main_dahl_gain         = 0.0f;
-    float    main_dahl_pos_cutoff   = 0.0f;
+    // Dahl friction compensation (0x202A–0x202F via 0x1602)
+    float    main_dahl_enable           = 0.0f;
+    float    main_dahl_gain             = 0.05f;
+    float    main_dahl_pos_cutoff       = 0.0f;
+    float    main_dahl_coulomb_force    = 0.05f;
     float    main_linear_damping_enable = 0.0f;
-    float    dut_dahl_enable        = 0.0f;
-    // float    dut_dahl_gain          = 0.0f;
-    float    dut_dahl_pos_cutoff    = 0.0f;
+    float    main_linear_damping_gain   = 0.05f;
+    float    dut_dahl_enable            = 0.0f;
+    float    dut_dahl_gain              = 0.05f;
+    float    dut_dahl_pos_cutoff        = 0.0f;
+    float    dut_dahl_coulomb_force     = 0.05f;
     float    dut_linear_damping_enable  = 0.0f;
+    float    dut_linear_damping_gain    = 0.05f;
 };
 
 // ── Per-drive gain snapshot ────────────────────────────────────────────────────

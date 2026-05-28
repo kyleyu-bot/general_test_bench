@@ -222,6 +222,19 @@ COMMAND_FIELDS = [
     ("dut_pos_kp",      "DUT Pos Kp"),
     ("dut_pos_ki",      "DUT Pos Ki"),
     ("dut_pos_kd",      "DUT Pos Kd"),
+    # Dahl / linear damping (0x1602)
+    ("main_dahl_enable",            "Main Dahl Enable"),
+    ("main_dahl_pos_cutoff",        "Main Dahl Pos Cutoff"),
+    ("main_dahl_gain",              "Main Dahl Gain"),
+    ("main_dahl_coulomb_force",     "Main Dahl Coulomb F"),
+    ("main_linear_damping_enable",  "Main Lin Damp Enable"),
+    ("main_linear_damping_gain",    "Main Lin Damp Gain"),
+    ("dut_dahl_enable",             "DUT Dahl Enable"),
+    ("dut_dahl_pos_cutoff",         "DUT Dahl Pos Cutoff"),
+    ("dut_dahl_gain",               "DUT Dahl Gain"),
+    ("dut_dahl_coulomb_force",      "DUT Dahl Coulomb F"),
+    ("dut_linear_damping_enable",   "DUT Lin Damp Enable"),
+    ("dut_linear_damping_gain",     "DUT Lin Damp Gain"),
 ]
 
 # Fields that use a float spinbox instead of the integer slider
@@ -232,6 +245,10 @@ GAIN_FIELDS = {
     "dut_torque_kp",  "dut_torque_max",  "dut_torque_min",
     "dut_vel_kp",     "dut_vel_ki",      "dut_vel_kd",
     "dut_pos_kp",     "dut_pos_ki",      "dut_pos_kd",
+    "main_dahl_enable",        "main_dahl_pos_cutoff",    "main_dahl_gain",
+    "main_dahl_coulomb_force", "main_linear_damping_enable", "main_linear_damping_gain",
+    "dut_dahl_enable",         "dut_dahl_pos_cutoff",     "dut_dahl_gain",
+    "dut_dahl_coulomb_force",  "dut_linear_damping_enable",  "dut_linear_damping_gain",
 }
 
 # DS402 modes of operation: (display label, int value sent in JSON)

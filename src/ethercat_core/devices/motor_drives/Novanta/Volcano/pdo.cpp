@@ -28,9 +28,11 @@ std::vector<uint8_t> packCommand(
                                       : cmd.target_torque_nm;
     pdo.iq_setpoint            = cmd.iq_setpoint_a;
     pdo.dahl_friction_comp_enable      = cmd.dahl_friction_comp_enable;
-    // pdo.dahl_friction_comp_gain        = cmd.dahl_friction_comp_gain;
+    pdo.dahl_friction_comp_gain        = cmd.dahl_friction_comp_gain;
     pdo.dahl_friction_comp_pos_cutoff  = cmd.dahl_friction_comp_pos_cutoff;
+    pdo.dahl_coulomb_force             = cmd.dahl_coulomb_force;
     pdo.linear_damping_comp_enable     = cmd.linear_damping_comp_enable;
+    pdo.linear_damping_comp_gain       = cmd.linear_damping_comp_gain;
     pdo.torque_kp              = cmd.torque_kp;
     pdo.torque_loop_max_output = cmd.torque_loop_max_output;
     pdo.torque_loop_min_output = cmd.torque_loop_min_output;
