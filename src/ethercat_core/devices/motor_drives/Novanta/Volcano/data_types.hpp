@@ -73,6 +73,7 @@ struct DriveStatus {
     float           id_command                   = 0.0f;
     float           motor_temp_2                 = 0.0f;  // 0x2065
     float           power_stage_temp_1           = 0.0f;  // 0x2061
+    float           power_stage_temp_2           = 0.0f;  // 0x2064
     int64_t         dc_time_error_ns  = 0;
     int64_t         cycle_time_ns     = 0;
     uint64_t        seq               = 0;

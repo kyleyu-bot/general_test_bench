@@ -25,7 +25,7 @@
 namespace ethercat_core::novanta::volcano {
 
 static constexpr int RX_PDO_SIZE        = 61;
-static constexpr int TX_PDO_SIZE        = 63;
+static constexpr int TX_PDO_SIZE        = 67;
 static constexpr int LEGACY_TX_PDO_SIZE = 16;
 
 struct PdoScaling {
@@ -78,6 +78,7 @@ struct TxPdo {
     float    id_command;          // 0x2073
     float    motor_temp_2;        // 0x2065
     float    power_stage_temp_1;  // 0x2061
+    float    power_stage_temp_2;  // 0x2064
 };
 static_assert(sizeof(TxPdo) == TX_PDO_SIZE, "TxPdo size mismatch");
 
