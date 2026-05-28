@@ -670,6 +670,12 @@ class DynoCommander(Node):
                             "pos_kp", "pos_ki", "pos_kd"):
             current = limits.get(field_type, 0.0)
             return (0.0, 20.0, current)   # float range; default = value from drive
+        elif field_type in ("dahl_gain", "dahl_coulomb_force", "linear_damping_gain"):
+            return (0.001, 100.0, 0.05)   # must be > 0; seed with struct default
+        elif field_type in ("dahl_enable", "linear_damping_enable"):
+            return (0.0, 1.0, 0.0)
+        elif field_type == "dahl_pos_cutoff":
+            return (0.0, 65535.0, 0.0)
         return None
 
     def pulse_fault_reset(self):
