@@ -346,6 +346,7 @@ EthercatLoop::CycleCallback DualNovantaTestbench::makeCallback(
                 rec.main_tx_idc_actual        = ds.idc_actual;
                 rec.main_tx_iq_command        = ds.iq_command;
                 rec.main_tx_id_command        = ds.id_command;
+                rec.main_tx_motor_temp_2      = ds.motor_temp_2;
             } else {
                 rec.dut_tx_statusword         = ds.status_word;
                 rec.dut_tx_mode_display       = ds.mode_of_operation_display;
@@ -363,6 +364,7 @@ EthercatLoop::CycleCallback DualNovantaTestbench::makeCallback(
                 rec.dut_tx_idc_actual         = ds.idc_actual;
                 rec.dut_tx_iq_command         = ds.iq_command;
                 rec.dut_tx_id_command         = ds.id_command;
+                rec.dut_tx_motor_temp_2       = ds.motor_temp_2;
             }
         };
 
@@ -443,7 +445,8 @@ std::string DualNovantaTestbench::serializeToCsvRow(const dyno::PdoLogRecord& r)
       << r.main_tx_input_enc_pos     << ',' << r.main_tx_position_setpoint  << ','
       << r.main_tx_velocity_setpoint << ',' << r.main_tx_iq_actual          << ','
       << r.main_tx_id_actual         << ',' << r.main_tx_idc_actual         << ','
-      << r.main_tx_iq_command        << ',' << r.main_tx_id_command         << ',';
+      << r.main_tx_iq_command        << ',' << r.main_tx_id_command         << ','
+      << r.main_tx_motor_temp_2     << ',';
     // main rx
     o << static_cast<int>(r.main_rx_mode_of_operation) << ','
       << r.main_rx_target_position   << ',' << r.main_rx_target_velocity    << ','
@@ -462,7 +465,8 @@ std::string DualNovantaTestbench::serializeToCsvRow(const dyno::PdoLogRecord& r)
       << r.dut_tx_input_enc_pos      << ',' << r.dut_tx_position_setpoint   << ','
       << r.dut_tx_velocity_setpoint  << ',' << r.dut_tx_iq_actual           << ','
       << r.dut_tx_id_actual          << ',' << r.dut_tx_idc_actual          << ','
-      << r.dut_tx_iq_command         << ',' << r.dut_tx_id_command          << ',';
+      << r.dut_tx_iq_command         << ',' << r.dut_tx_id_command          << ','
+      << r.dut_tx_motor_temp_2      << ',';
     // dut rx
     o << static_cast<int>(r.dut_rx_mode_of_operation) << ','
       << r.dut_rx_target_position    << ',' << r.dut_rx_target_velocity     << ','
@@ -519,6 +523,7 @@ std::string DualNovantaTestbench::makeDriveJson(
         j["idc_actual"]         = ds.idc_actual;
         j["iq_command"]         = ds.iq_command;
         j["id_command"]         = ds.id_command;
+        j["motor_temp_2"]       = ds.motor_temp_2;
         // Limits in natural units for GUI slider ranging
         j["max_velocity_abs_rad_s"] = static_cast<double>(ds.max_velocity_abs)
                                       * (2.0 * M_PI / 1000.0);

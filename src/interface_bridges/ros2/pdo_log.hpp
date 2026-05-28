@@ -45,6 +45,7 @@ struct PdoLogRecord {
     float    main_tx_idc_actual          = 0.f;  ///< 0x2076  (A)
     float    main_tx_iq_command          = 0.f;  ///< 0x2072  (A)
     float    main_tx_id_command          = 0.f;  ///< 0x2073  (A)
+    float    main_tx_motor_temp_2        = 0.f;  ///< 0x2065  (°C)
 
     // ── Main drive — RxPDO (master → drive) ─────────────────────────────────
     int8_t   main_rx_mode_of_operation   = 0;    ///< 0x6060
@@ -80,6 +81,7 @@ struct PdoLogRecord {
     float    dut_tx_idc_actual           = 0.f;
     float    dut_tx_iq_command           = 0.f;
     float    dut_tx_id_command           = 0.f;
+    float    dut_tx_motor_temp_2         = 0.f;  ///< 0x2065  (°C)
 
     // ── DUT — RxPDO (master → drive) ────────────────────────────────────────
     int8_t   dut_rx_mode_of_operation    = 0;
@@ -114,7 +116,7 @@ inline constexpr const char* PDO_LOG_CSV_HEADER =
     "main_tx_bus_voltage,main_tx_torque_nm,main_tx_motor_temp,main_tx_error_code,"
     "main_tx_motor_velocity,main_tx_input_enc_pos,main_tx_position_setpoint,"
     "main_tx_velocity_setpoint,main_tx_iq_actual,main_tx_id_actual,"
-    "main_tx_idc_actual,main_tx_iq_command,main_tx_id_command,"
+    "main_tx_idc_actual,main_tx_iq_command,main_tx_id_command,main_tx_motor_temp_2,"
     // main rx
     "main_rx_mode_of_operation,main_rx_target_position,main_rx_target_velocity,"
     "main_rx_torque_command,main_rx_iq_command,main_rx_torque_kp,main_rx_torque_max_out,main_rx_torque_min_out,"
@@ -125,7 +127,7 @@ inline constexpr const char* PDO_LOG_CSV_HEADER =
     "dut_tx_bus_voltage,dut_tx_torque_nm,dut_tx_motor_temp,dut_tx_error_code,"
     "dut_tx_motor_velocity,dut_tx_input_enc_pos,dut_tx_position_setpoint,"
     "dut_tx_velocity_setpoint,dut_tx_iq_actual,dut_tx_id_actual,"
-    "dut_tx_idc_actual,dut_tx_iq_command,dut_tx_id_command,"
+    "dut_tx_idc_actual,dut_tx_iq_command,dut_tx_id_command,dut_tx_motor_temp_2,"
     // dut rx
     "dut_rx_mode_of_operation,dut_rx_target_position,dut_rx_target_velocity,"
     "dut_rx_torque_command,dut_rx_iq_command,dut_rx_torque_kp,dut_rx_torque_max_out,dut_rx_torque_min_out,"
