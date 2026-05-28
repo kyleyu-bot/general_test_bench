@@ -24,7 +24,7 @@
 
 namespace ethercat_core::novanta::volcano {
 
-static constexpr int RX_PDO_SIZE        = 61;
+static constexpr int RX_PDO_SIZE        = 65;
 static constexpr int TX_PDO_SIZE        = 67;
 static constexpr int LEGACY_TX_PDO_SIZE = 16;
 
@@ -55,7 +55,7 @@ struct RxPdo {
     float    dahl_friction_comp_enable;       // 0x202A via 0x1602
     // float    dahl_friction_comp_gain;         // 0x202B via 0x1602
     uint16_t dahl_friction_comp_pos_cutoff;   // 0x202C via 0x1602
-    // float    dahl_friction_comp_coulomb;      // 0x202D via 0x1602
+    float    linear_damping_comp_enable;      // 0x202E via 0x1602
 };
 static_assert(sizeof(RxPdo) == RX_PDO_SIZE, "RxPdo size mismatch");
 

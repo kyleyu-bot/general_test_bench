@@ -114,11 +114,11 @@ struct CommandState {
     float    main_dahl_enable       = 0.0f;
     // float    main_dahl_gain         = 0.0f;
     float    main_dahl_pos_cutoff   = 0.0f;
-    // float    main_dahl_coulomb      = 0.0f;
+    float    main_linear_damping_enable = 0.0f;
     float    dut_dahl_enable        = 0.0f;
     // float    dut_dahl_gain          = 0.0f;
     float    dut_dahl_pos_cutoff    = 0.0f;
-    // float    dut_dahl_coulomb       = 0.0f;
+    float    dut_linear_damping_enable  = 0.0f;
 };
 
 // ── Per-drive gain snapshot ────────────────────────────────────────────────────
