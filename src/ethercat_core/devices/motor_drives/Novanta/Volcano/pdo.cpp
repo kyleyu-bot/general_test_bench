@@ -76,6 +76,7 @@ DriveStatus unpackStatus(
     float    iq_command            = 0.0f;
     float    id_command            = 0.0f;
     float    motor_temp_2          = 0.0f;
+    float    power_stage_temp_1    = 0.0f;
     uint16_t error_code            = 0;
     uint8_t  al_state_code         = 0;
 
@@ -100,6 +101,7 @@ DriveStatus unpackStatus(
         iq_command             = pdo.iq_command;
         id_command             = pdo.id_command;
         motor_temp_2           = pdo.motor_temp_2;
+        power_stage_temp_1     = pdo.power_stage_temp_1;
         al_state_code          = (status_word != 0) ? AL_STATE_OPERATIONAL : 0u;
     } else {
         // Legacy layout: "<HbHhiiB"
@@ -155,6 +157,7 @@ DriveStatus unpackStatus(
     s.iq_command                = iq_command;
     s.id_command                = id_command;
     s.motor_temp_2              = motor_temp_2;
+    s.power_stage_temp_1        = power_stage_temp_1;
     s.dc_time_error_ns          = dc_error_ns;
     s.cycle_time_ns             = cycle_time_ns;
     s.seq                       = seq;
