@@ -157,6 +157,10 @@ EthercatLoop::CycleCallback DualNovantaTestbench::makeCallback(
         main_cmd.position_loop_kp        = cmd.main_pos_kp;
         main_cmd.position_loop_ki        = cmd.main_pos_ki;
         main_cmd.position_loop_kd        = cmd.main_pos_kd;
+        main_cmd.dahl_friction_comp_enable     = cmd.main_dahl_enable;
+        // main_cmd.dahl_friction_comp_gain       = cmd.main_dahl_gain;
+        main_cmd.dahl_friction_comp_pos_cutoff = static_cast<uint16_t>(cmd.main_dahl_pos_cutoff);
+        // main_cmd.dahl_friction_comp_coulomb    = cmd.main_dahl_coulomb;
 
         Command dut_cmd;
         dut_cmd.mode_of_operation       = static_cast<ModeOfOperation>(cmd.dut_mode);
@@ -177,6 +181,10 @@ EthercatLoop::CycleCallback DualNovantaTestbench::makeCallback(
         dut_cmd.position_loop_kp        = cmd.dut_pos_kp;
         dut_cmd.position_loop_ki        = cmd.dut_pos_ki;
         dut_cmd.position_loop_kd        = cmd.dut_pos_kd;
+        dut_cmd.dahl_friction_comp_enable     = cmd.dut_dahl_enable;
+        // dut_cmd.dahl_friction_comp_gain       = cmd.dut_dahl_gain;
+        dut_cmd.dahl_friction_comp_pos_cutoff = static_cast<uint16_t>(cmd.dut_dahl_pos_cutoff);
+        // dut_cmd.dahl_friction_comp_coulomb    = cmd.dut_dahl_coulomb;
 
         // ── Function generator ─────────────────────────────────────────────────
         const double dt_s = (stats.last_period_ns > 0)

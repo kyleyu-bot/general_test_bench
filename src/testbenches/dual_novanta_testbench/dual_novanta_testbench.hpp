@@ -15,7 +15,7 @@
 
 // ── Testbench parameter defaults ──────────────────────────────────────────────
 
-static constexpr const char* DEFAULT_TOPOLOGY      = "config/ethercat_device_config/topology.dyno2.template6.json";
+static constexpr const char* DEFAULT_TOPOLOGY      = "config/ethercat_device_config/topology.dyno2.template7.json";
 static constexpr const char* DEFAULT_DRIVE_SLAVE   = "main_drive";
 static constexpr const char* DEFAULT_DUT_SLAVE     = "dut";
 static constexpr const char* DEFAULT_ENCODER_SLAVE = "encoder_interface";
@@ -110,6 +110,15 @@ struct CommandState {
     float    dut_fg_chirp_f_low   = 0.1f;
     float    dut_fg_chirp_f_high  = 10.0f;
     float    dut_fg_chirp_dur     = 10.0f;
+    // Dahl friction compensation (0x202A–0x202D via 0x1602)
+    float    main_dahl_enable       = 0.0f;
+    // float    main_dahl_gain         = 0.0f;
+    float    main_dahl_pos_cutoff   = 0.0f;
+    // float    main_dahl_coulomb      = 0.0f;
+    float    dut_dahl_enable        = 0.0f;
+    // float    dut_dahl_gain          = 0.0f;
+    float    dut_dahl_pos_cutoff    = 0.0f;
+    // float    dut_dahl_coulomb       = 0.0f;
 };
 
 // ── Per-drive gain snapshot ────────────────────────────────────────────────────

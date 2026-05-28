@@ -188,6 +188,14 @@ public:
                     g_cmd_state.dut_pos_kp          = j.value("dut_pos_kp",           g_cmd_state.dut_pos_kp);
                     g_cmd_state.dut_pos_ki          = j.value("dut_pos_ki",           g_cmd_state.dut_pos_ki);
                     g_cmd_state.dut_pos_kd          = j.value("dut_pos_kd",           g_cmd_state.dut_pos_kd);
+                    g_cmd_state.main_dahl_enable     = j.value("main_dahl_enable",     g_cmd_state.main_dahl_enable);
+                    // g_cmd_state.main_dahl_gain       = j.value("main_dahl_gain",       g_cmd_state.main_dahl_gain);
+                    g_cmd_state.main_dahl_pos_cutoff = j.value("main_dahl_pos_cutoff", g_cmd_state.main_dahl_pos_cutoff);
+                    // g_cmd_state.main_dahl_coulomb    = j.value("main_dahl_coulomb",    g_cmd_state.main_dahl_coulomb);
+                    g_cmd_state.dut_dahl_enable      = j.value("dut_dahl_enable",      g_cmd_state.dut_dahl_enable);
+                    // g_cmd_state.dut_dahl_gain        = j.value("dut_dahl_gain",        g_cmd_state.dut_dahl_gain);
+                    g_cmd_state.dut_dahl_pos_cutoff  = j.value("dut_dahl_pos_cutoff",  g_cmd_state.dut_dahl_pos_cutoff);
+                    // g_cmd_state.dut_dahl_coulomb     = j.value("dut_dahl_coulomb",     g_cmd_state.dut_dahl_coulomb);
                     g_cmd_state.ch1_torque_scale    = j.value("ch1_torque_scale",     g_cmd_state.ch1_torque_scale);
                     g_cmd_state.ch2_torque_scale    = j.value("ch2_torque_scale",     g_cmd_state.ch2_torque_scale);
                     // One-shot: OR with current so a true is never lost between snapshots.

@@ -70,7 +70,7 @@ except ImportError:
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 DEFAULT_BRIDGE      = "build/dyno_ros2_bridge/bridge_ros2"
-DEFAULT_TOPOLOGY    = "config/ethercat_device_config/topology.dyno2.template6.json"
+DEFAULT_TOPOLOGY    = "config/ethercat_device_config/topology.dyno2.template7.json"
 DEFAULT_PUB_HZ      = 200.0
 TEST_SCRIPTS_DIR    = "src/dyno_test_scripts"  # scanned for *.py test scripts
 DEFAULT_FAULT_S  = 2.0
