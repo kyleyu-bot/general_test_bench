@@ -26,7 +26,7 @@ try:
     from PyQt5.QtWidgets import (
         QApplication, QMainWindow, QWidget,
         QVBoxLayout, QHBoxLayout, QGridLayout,
-        QSplitter, QLabel, QSpinBox, QPushButton,
+        QSplitter, QLabel, QSpinBox, QPushButton, QLineEdit,
         QTreeWidget, QTreeWidgetItem, QSizePolicy,
         QMenu, QAction, QFrame, QScrollArea,
     )
@@ -208,6 +208,7 @@ class TopicBrowser(QTreeWidget):
 
         self._topic_items: dict[str, QTreeWidgetItem] = {}
         self._known:       dict[str, set[str]]        = {}
+        self._filter_text: str                        = ""
 
         # Clicking anywhere on a topic row toggles expand/collapse.
         self.itemClicked.connect(self._on_item_clicked)
@@ -215,6 +216,22 @@ class TopicBrowser(QTreeWidget):
     def _on_item_clicked(self, item: QTreeWidgetItem, _col: int) -> None:
         if item.parent() is None:   # top-level = topic row
             item.setExpanded(not item.isExpanded())
+
+    def set_filter(self, text: str) -> None:
+        self._filter_text = text.strip().lower()
+        self._apply_filter()
+
+    def _apply_filter(self) -> None:
+        q = self._filter_text
+        for ti in range(self.topLevelItemCount()):
+            topic_item = self.topLevelItem(ti)
+            any_visible = False
+            for fi in range(topic_item.childCount()):
+                field_item = topic_item.child(fi)
+                visible = not q or q in field_item.text(0).lower()
+                field_item.setHidden(not visible)
+                any_visible = any_visible or visible
+            topic_item.setHidden(bool(q) and not any_visible)
 
     def refresh(self, fields: dict[str, list[str]]) -> None:
         for topic in sorted(fields):
@@ -233,6 +250,7 @@ class TopicBrowser(QTreeWidget):
                     child = QTreeWidgetItem(topic_item, [field])
                     child.setData(0, Qt.UserRole, f"{topic}::{field}")
                     child.setFlags(child.flags() | Qt.ItemIsDragEnabled)
+        self._apply_filter()
 
     def mimeData(self, items):
         mime = QMimeData()
@@ -584,6 +602,19 @@ class DynoPlotWindow(QMainWindow):
         self._browser.setMaximumWidth(280)
         self._browser.setMinimumWidth(160)
 
+        self._browser_search = QLineEdit()
+        self._browser_search.setPlaceholderText("Filter fields…")
+        self._browser_search.textChanged.connect(self._browser.set_filter)
+
+        browser_container = QWidget()
+        browser_container.setMaximumWidth(280)
+        browser_container.setMinimumWidth(160)
+        browser_lay = QVBoxLayout(browser_container)
+        browser_lay.setContentsMargins(0, 0, 0, 0)
+        browser_lay.setSpacing(2)
+        browser_lay.addWidget(self._browser_search)
+        browser_lay.addWidget(self._browser)
+
         self._grid = PlotGrid(store, rows=2, cols=2)
 
         self._display_panel = DisplayPanel(store)
@@ -591,7 +622,7 @@ class DynoPlotWindow(QMainWindow):
         self._display_panel.setMaximumWidth(280)
 
         splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(self._browser)
+        splitter.addWidget(browser_container)
         splitter.addWidget(self._grid)
         splitter.addWidget(self._display_panel)
         splitter.setStretchFactor(0, 0)
