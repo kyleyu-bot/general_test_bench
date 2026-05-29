@@ -1950,10 +1950,15 @@ class DynoWindow(QMainWindow):
     def _build_ui(self):
         # ── Left: command field list ───────────────────────────────────────────
         self._field_list  = CommandFieldList()
+        self._field_search = QLineEdit()
+        self._field_search.setPlaceholderText("Search fields…")
+        self._field_search.setMaximumWidth(150)
+        self._field_search.textChanged.connect(self._filter_command_fields)
         field_list_outer  = QWidget()
         field_list_outer_lay = QVBoxLayout(field_list_outer)
         field_list_outer_lay.setContentsMargins(0, 0, 0, 0)
-        field_list_outer_lay.setSpacing(0)
+        field_list_outer_lay.setSpacing(2)
+        field_list_outer_lay.addWidget(self._field_search)
         field_list_outer_lay.addWidget(self._field_list)
         field_list_outer_lay.addStretch(1)
 
@@ -2759,6 +2764,14 @@ class DynoWindow(QMainWindow):
         self._hold_output1 = self._output1_btn.isChecked()
         self._output1_btn.setText(
             "Output 1 ON" if self._hold_output1 else "Hold Output 1")
+
+    def _filter_command_fields(self, text: str) -> None:
+        q = text.strip().lower()
+        for i in range(self._field_list.count()):
+            item = self._field_list.item(i)
+            label = item.text().lower()
+            key   = (item.data(Qt.UserRole) or "").lower()
+            item.setHidden(bool(q) and q not in label and q not in key)
 
     def _on_ch1_scale_changed(self, idx: int) -> None:
         self._ch1_scale = self._ch1_scale_combo.itemData(idx)
