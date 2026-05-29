@@ -70,8 +70,8 @@ struct DriveStatus {
     float           motor_temp                   = 0.0f;
     float           iq_actual                    = 0.0f;
     float           id_actual                    = 0.0f;
-    float           idc_actual                   = 0.0f;
     uint16_t        imu_accel_x                  = 0;     // 0x218A
+    uint16_t        imu_accel_y                  = 0;     // 0x218B
     float           iq_command                   = 0.0f;
     float           id_command                   = 0.0f;
     float           motor_temp_2                 = 0.0f;  // 0x2065
