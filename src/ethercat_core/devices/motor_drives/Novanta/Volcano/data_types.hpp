@@ -66,7 +66,7 @@ struct DriveStatus {
     int32_t         max_position                 = 0;
     int32_t         min_position                 = 0;
     float           max_velocity_abs             = 0.0f;
-    float           bus_voltage                  = 0.0f;
+    float           power_stage_temp_3           = 0.0f;  // 0x205D
     float           motor_temp                   = 0.0f;
     float           iq_actual                    = 0.0f;
     float           id_actual                    = 0.0f;

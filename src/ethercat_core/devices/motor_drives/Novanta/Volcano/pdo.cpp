@@ -70,7 +70,7 @@ DriveStatus unpackStatus(
     int32_t  input_encoder_pos     = 0;
     int32_t  position_setpoint     = 0;
     float    received_velocity_raw = 0.0f;
-    float    bus_voltage           = 0.0f;
+    float    power_stage_temp_3    = 0.0f;
     float    motor_temp            = 0.0f;
     float    iq_actual             = 0.0f;
     float    id_actual             = 0.0f;
@@ -96,7 +96,7 @@ DriveStatus unpackStatus(
         input_encoder_pos      = pdo.input_encoder_pos;
         position_setpoint      = pdo.position_setpoint;
         received_velocity_raw  = pdo.velocity_setpoint;
-        bus_voltage            = pdo.bus_voltage;
+        power_stage_temp_3     = pdo.power_stage_temp_3;
         motor_temp             = pdo.motor_temp;
         iq_actual              = pdo.iq_actual;
         id_actual              = pdo.id_actual;
@@ -153,7 +153,7 @@ DriveStatus unpackStatus(
     s.input_encoder_pos         = input_encoder_pos;
     s.position_setpoint         = position_setpoint;
     s.velocity_command_received = received_velocity_raw;
-    s.bus_voltage               = bus_voltage;
+    s.power_stage_temp_3        = power_stage_temp_3;
     s.motor_temp                = motor_temp;
     s.iq_actual                 = iq_actual;
     s.id_actual                 = id_actual;

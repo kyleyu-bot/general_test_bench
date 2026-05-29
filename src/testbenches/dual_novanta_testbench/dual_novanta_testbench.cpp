@@ -337,7 +337,7 @@ EthercatLoop::CycleCallback DualNovantaTestbench::makeCallback(
                 rec.main_tx_statusword        = ds.status_word;
                 rec.main_tx_mode_display      = ds.mode_of_operation_display;
                 rec.main_tx_output_enc_pos    = ds.measured_output_side_position_raw_cnt;
-                rec.main_tx_bus_voltage       = ds.bus_voltage;
+                rec.main_tx_power_stage_temp_3 = ds.power_stage_temp_3;
                 rec.main_tx_torque_nm         = ds.measured_torque_nm;
                 rec.main_tx_motor_temp        = ds.motor_temp;
                 rec.main_tx_error_code        = ds.error_code;
@@ -350,14 +350,14 @@ EthercatLoop::CycleCallback DualNovantaTestbench::makeCallback(
                 rec.main_tx_idc_actual        = ds.idc_actual;
                 rec.main_tx_iq_command        = ds.iq_command;
                 rec.main_tx_id_command        = ds.id_command;
-                rec.main_tx_motor_temp_2      = ds.motor_temp_2;
+                rec.main_tx_motor_temp_2       = ds.motor_temp_2;
                 rec.main_tx_power_stage_temp_1 = ds.power_stage_temp_1;
                 rec.main_tx_power_stage_temp_2 = ds.power_stage_temp_2;
             } else {
                 rec.dut_tx_statusword         = ds.status_word;
                 rec.dut_tx_mode_display       = ds.mode_of_operation_display;
                 rec.dut_tx_output_enc_pos     = ds.measured_output_side_position_raw_cnt;
-                rec.dut_tx_bus_voltage        = ds.bus_voltage;
+                rec.dut_tx_power_stage_temp_3  = ds.power_stage_temp_3;
                 rec.dut_tx_torque_nm          = ds.measured_torque_nm;
                 rec.dut_tx_motor_temp         = ds.motor_temp;
                 rec.dut_tx_error_code         = ds.error_code;
@@ -370,7 +370,7 @@ EthercatLoop::CycleCallback DualNovantaTestbench::makeCallback(
                 rec.dut_tx_idc_actual         = ds.idc_actual;
                 rec.dut_tx_iq_command         = ds.iq_command;
                 rec.dut_tx_id_command         = ds.id_command;
-                rec.dut_tx_motor_temp_2       = ds.motor_temp_2;
+                rec.dut_tx_motor_temp_2        = ds.motor_temp_2;
                 rec.dut_tx_power_stage_temp_1  = ds.power_stage_temp_1;
                 rec.dut_tx_power_stage_temp_2  = ds.power_stage_temp_2;
             }
@@ -447,14 +447,14 @@ std::string DualNovantaTestbench::serializeToCsvRow(const dyno::PdoLogRecord& r)
       << r.cycle_time_ns << ',' << r.dc_error_ns   << ',' << r.period_ns   << ',';
     // main tx
     o << r.main_tx_statusword        << ',' << static_cast<int>(r.main_tx_mode_display)  << ','
-      << r.main_tx_output_enc_pos    << ',' << r.main_tx_bus_voltage        << ','
+      << r.main_tx_output_enc_pos    << ',' << r.main_tx_power_stage_temp_3 << ','
       << r.main_tx_torque_nm         << ',' << r.main_tx_motor_temp         << ','
       << r.main_tx_error_code        << ',' << r.main_tx_motor_velocity     << ','
       << r.main_tx_input_enc_pos     << ',' << r.main_tx_position_setpoint  << ','
       << r.main_tx_velocity_setpoint << ',' << r.main_tx_iq_actual          << ','
       << r.main_tx_id_actual         << ',' << r.main_tx_idc_actual         << ','
       << r.main_tx_iq_command        << ',' << r.main_tx_id_command         << ','
-      << r.main_tx_motor_temp_2     << ','
+      << r.main_tx_motor_temp_2       << ','
       << r.main_tx_power_stage_temp_1 << ','
       << r.main_tx_power_stage_temp_2 << ',';
     // main rx
@@ -469,16 +469,16 @@ std::string DualNovantaTestbench::serializeToCsvRow(const dyno::PdoLogRecord& r)
       << static_cast<int>(r.main_rx_enable) << ',';
     // dut tx
     o << r.dut_tx_statusword         << ',' << static_cast<int>(r.dut_tx_mode_display)   << ','
-      << r.dut_tx_output_enc_pos     << ',' << r.dut_tx_bus_voltage         << ','
+      << r.dut_tx_output_enc_pos     << ',' << r.dut_tx_power_stage_temp_3  << ','
       << r.dut_tx_torque_nm          << ',' << r.dut_tx_motor_temp          << ','
       << r.dut_tx_error_code         << ',' << r.dut_tx_motor_velocity      << ','
       << r.dut_tx_input_enc_pos      << ',' << r.dut_tx_position_setpoint   << ','
       << r.dut_tx_velocity_setpoint  << ',' << r.dut_tx_iq_actual           << ','
       << r.dut_tx_id_actual          << ',' << r.dut_tx_idc_actual          << ','
       << r.dut_tx_iq_command         << ',' << r.dut_tx_id_command          << ','
-      << r.dut_tx_motor_temp_2      << ','
-      << r.dut_tx_power_stage_temp_1 << ','
-      << r.dut_tx_power_stage_temp_2 << ',';
+      << r.dut_tx_motor_temp_2        << ','
+      << r.dut_tx_power_stage_temp_1  << ','
+      << r.dut_tx_power_stage_temp_2  << ',';
     // dut rx
     o << static_cast<int>(r.dut_rx_mode_of_operation) << ','
       << r.dut_rx_target_position    << ',' << r.dut_rx_target_velocity     << ','
@@ -528,7 +528,7 @@ std::string DualNovantaTestbench::makeDriveJson(
         j["pos_setpoint_raw_enc_cnt"] = ds.position_setpoint;
         j["pos_setpoint_rad"]   = static_cast<double>(ds.position_setpoint) * enc_to_rad;
         j["fb_torque"]          = ds.measured_torque_nm;
-        j["bus_voltage"]        = ds.bus_voltage;
+        j["power_stage_temp_3"] = ds.power_stage_temp_3;
         j["motor_temp"]         = ds.motor_temp;
         j["iq_actual"]          = ds.iq_actual;
         j["id_actual"]          = ds.id_actual;
@@ -595,7 +595,7 @@ void DualNovantaTestbench::printDebug(
             static_cast<int>(ds.mode_of_operation_display),
             static_cast<unsigned>(ds.status_word),
             static_cast<unsigned>(ds.error_code),
-            static_cast<double>(ds.bus_voltage),
+            static_cast<double>(ds.power_stage_temp_3),
             static_cast<double>(cmd.main_vel_kp),
             static_cast<double>(cmd.main_vel_ki),
             static_cast<double>(cmd.main_torque_kp)
@@ -621,7 +621,7 @@ void DualNovantaTestbench::printDebug(
             static_cast<int>(ds.mode_of_operation_display),
             static_cast<unsigned>(ds.status_word),
             static_cast<unsigned>(ds.error_code),
-            static_cast<double>(ds.bus_voltage),
+            static_cast<double>(ds.power_stage_temp_3),
             static_cast<double>(cmd.dut_vel_kp),
             static_cast<double>(cmd.dut_vel_ki),
             static_cast<double>(cmd.dut_torque_kp)

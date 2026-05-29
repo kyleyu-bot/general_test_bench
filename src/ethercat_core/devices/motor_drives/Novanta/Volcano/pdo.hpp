@@ -9,12 +9,12 @@
 //           0x250C(F32), 0x2511(F32), 0x2512(F32), 0x2513(F32)
 //   0x1602: 0x202A(F32), 0x202B(F32), 0x202C(U16), 0x202D(F32), 0x202E(F32), 0x202F(F32)
 //
-// TX PDO (drive → master), 55 bytes, format "<HbifhfHiiiffffff":
-//   0x1A00: 0x6041(U16), 0x6061(S8), 0x6064(S32), 0x2060(F32),
+// TX PDO (drive → master), 67 bytes:
+//   0x1A00: 0x6041(U16), 0x6061(S8), 0x6064(S32), 0x205D(F32),
 //           0x6077(S16), 0x2063(F32), 0x603F(U16)
 //   0x1A01: 0x606C(S32), 0x204A(S32), 0x2078(S32), 0x2079(F32),
 //           0x203B(F32), 0x203C(F32), 0x2076(F32)
-//   0x1A02: 0x2072(F32), 0x2073(F32)
+//   0x1A02: 0x2072(F32), 0x2073(F32), 0x2065(F32), 0x2061(F32), 0x2064(F32)
 // ──────────────────────────────────────────────────────────────────────────
 
 #include "ethercat_core/devices/motor_drives/Novanta/Volcano/data_types.hpp"
@@ -65,7 +65,7 @@ struct TxPdo {
     uint16_t statusword;          // 0x6041
     int8_t   mode_display;        // 0x6061
     int32_t  measured_output_encoder_position_raw;    // 0x6064, output side encoder
-    float    bus_voltage;         // 0x2060
+    float    power_stage_temp_3;  // 0x205D
     int16_t  estimated_torque;    // 0x6077
     float    motor_temp;          // 0x2063
     uint16_t error_code;          // 0x603F
