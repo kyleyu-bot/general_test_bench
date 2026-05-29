@@ -75,6 +75,7 @@ DriveStatus unpackStatus(
     float    iq_actual             = 0.0f;
     float    id_actual             = 0.0f;
     float    idc_actual            = 0.0f;
+    uint16_t imu_accel_x           = 0;
     float    iq_command            = 0.0f;
     float    id_command            = 0.0f;
     float    motor_temp_2          = 0.0f;
@@ -101,6 +102,7 @@ DriveStatus unpackStatus(
         iq_actual              = pdo.iq_actual;
         id_actual              = pdo.id_actual;
         idc_actual             = pdo.idc_actual;
+        imu_accel_x            = pdo.imu_accel_x;
         iq_command             = pdo.iq_command;
         id_command             = pdo.id_command;
         motor_temp_2           = pdo.motor_temp_2;
@@ -158,6 +160,7 @@ DriveStatus unpackStatus(
     s.iq_actual                 = iq_actual;
     s.id_actual                 = id_actual;
     s.idc_actual                = idc_actual;
+    s.imu_accel_x               = imu_accel_x;
     s.iq_command                = iq_command;
     s.id_command                = id_command;
     s.motor_temp_2              = motor_temp_2;

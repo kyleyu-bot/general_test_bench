@@ -9,11 +9,11 @@
 //           0x250C(F32), 0x2511(F32), 0x2512(F32), 0x2513(F32)
 //   0x1602: 0x202A(F32), 0x202B(F32), 0x202C(U16), 0x202D(F32), 0x202E(F32), 0x202F(F32)
 //
-// TX PDO (drive → master), 67 bytes:
+// TX PDO (drive → master), 69 bytes:
 //   0x1A00: 0x6041(U16), 0x6061(S8), 0x6064(S32), 0x205D(F32),
 //           0x6077(S16), 0x2063(F32), 0x603F(U16)
 //   0x1A01: 0x606C(S32), 0x204A(S32), 0x2078(S32), 0x2079(F32),
-//           0x203B(F32), 0x203C(F32), 0x2076(F32)
+//           0x203B(F32), 0x203C(F32), 0x2076(F32), 0x218A(U16)
 //   0x1A02: 0x2072(F32), 0x2073(F32), 0x2065(F32), 0x2061(F32), 0x2064(F32)
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -25,7 +25,7 @@
 namespace ethercat_core::novanta::volcano {
 
 static constexpr int RX_PDO_SIZE        = 77;
-static constexpr int TX_PDO_SIZE        = 67;
+static constexpr int TX_PDO_SIZE        = 69;
 static constexpr int LEGACY_TX_PDO_SIZE = 16;
 
 struct PdoScaling {
@@ -76,6 +76,7 @@ struct TxPdo {
     float    iq_actual;           // 0x203B
     float    id_actual;           // 0x203C
     float    idc_actual;          // 0x2076
+    uint16_t imu_accel_x;         // 0x218A via 0x1A01
     float    iq_command;          // 0x2072
     float    id_command;          // 0x2073
     float    motor_temp_2;        // 0x2065
