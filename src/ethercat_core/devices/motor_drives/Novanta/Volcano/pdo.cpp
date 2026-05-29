@@ -76,6 +76,10 @@ DriveStatus unpackStatus(
     float    id_actual             = 0.0f;
     uint16_t imu_accel_x           = 0;
     uint16_t imu_accel_y           = 0;
+    uint16_t imu_accel_z           = 0;
+    uint16_t imu_gyro_x            = 0;
+    uint16_t imu_gyro_y            = 0;
+    uint16_t imu_gyro_z            = 0;
     float    iq_command            = 0.0f;
     float    id_command            = 0.0f;
     float    motor_temp_2          = 0.0f;
@@ -103,6 +107,10 @@ DriveStatus unpackStatus(
         id_actual              = pdo.id_actual;
         imu_accel_x            = pdo.imu_accel_x;
         imu_accel_y            = pdo.imu_accel_y;
+        imu_accel_z            = pdo.imu_accel_z;
+        imu_gyro_x             = pdo.imu_gyro_x;
+        imu_gyro_y             = pdo.imu_gyro_y;
+        imu_gyro_z             = pdo.imu_gyro_z;
         iq_command             = pdo.iq_command;
         id_command             = pdo.id_command;
         motor_temp_2           = pdo.motor_temp_2;
@@ -161,6 +169,10 @@ DriveStatus unpackStatus(
     s.id_actual                 = id_actual;
     s.imu_accel_x               = imu_accel_x;
     s.imu_accel_y               = imu_accel_y;
+    s.imu_accel_z               = imu_accel_z;
+    s.imu_gyro_x                = imu_gyro_x;
+    s.imu_gyro_y                = imu_gyro_y;
+    s.imu_gyro_z                = imu_gyro_z;
     s.iq_command                = iq_command;
     s.id_command                = id_command;
     s.motor_temp_2              = motor_temp_2;

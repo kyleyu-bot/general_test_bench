@@ -349,6 +349,10 @@ EthercatLoop::CycleCallback DualNovantaTestbench::makeCallback(
                 rec.main_tx_id_actual         = ds.id_actual;
                 rec.main_tx_imu_accel_x       = ds.imu_accel_x;
                 rec.main_tx_imu_accel_y       = ds.imu_accel_y;
+                rec.main_tx_imu_accel_z       = ds.imu_accel_z;
+                rec.main_tx_imu_gyro_x        = ds.imu_gyro_x;
+                rec.main_tx_imu_gyro_y        = ds.imu_gyro_y;
+                rec.main_tx_imu_gyro_z        = ds.imu_gyro_z;
                 rec.main_tx_iq_command        = ds.iq_command;
                 rec.main_tx_id_command        = ds.id_command;
                 rec.main_tx_motor_temp_2       = ds.motor_temp_2;
@@ -370,6 +374,10 @@ EthercatLoop::CycleCallback DualNovantaTestbench::makeCallback(
                 rec.dut_tx_id_actual          = ds.id_actual;
                 rec.dut_tx_imu_accel_x        = ds.imu_accel_x;
                 rec.dut_tx_imu_accel_y        = ds.imu_accel_y;
+                rec.dut_tx_imu_accel_z        = ds.imu_accel_z;
+                rec.dut_tx_imu_gyro_x         = ds.imu_gyro_x;
+                rec.dut_tx_imu_gyro_y         = ds.imu_gyro_y;
+                rec.dut_tx_imu_gyro_z         = ds.imu_gyro_z;
                 rec.dut_tx_iq_command         = ds.iq_command;
                 rec.dut_tx_id_command         = ds.id_command;
                 rec.dut_tx_motor_temp_2        = ds.motor_temp_2;
@@ -457,6 +465,10 @@ std::string DualNovantaTestbench::serializeToCsvRow(const dyno::PdoLogRecord& r)
       << r.main_tx_id_actual         << ','
       << r.main_tx_imu_accel_x       << ','
       << r.main_tx_imu_accel_y       << ','
+      << r.main_tx_imu_accel_z       << ','
+      << r.main_tx_imu_gyro_x        << ','
+      << r.main_tx_imu_gyro_y        << ','
+      << r.main_tx_imu_gyro_z        << ','
       << r.main_tx_iq_command        << ',' << r.main_tx_id_command         << ','
       << r.main_tx_motor_temp_2       << ','
       << r.main_tx_power_stage_temp_1 << ','
@@ -481,6 +493,10 @@ std::string DualNovantaTestbench::serializeToCsvRow(const dyno::PdoLogRecord& r)
       << r.dut_tx_id_actual          << ','
       << r.dut_tx_imu_accel_x        << ','
       << r.dut_tx_imu_accel_y        << ','
+      << r.dut_tx_imu_accel_z        << ','
+      << r.dut_tx_imu_gyro_x         << ','
+      << r.dut_tx_imu_gyro_y         << ','
+      << r.dut_tx_imu_gyro_z         << ','
       << r.dut_tx_iq_command         << ',' << r.dut_tx_id_command          << ','
       << r.dut_tx_motor_temp_2        << ','
       << r.dut_tx_power_stage_temp_1  << ','
@@ -540,6 +556,10 @@ std::string DualNovantaTestbench::makeDriveJson(
         j["id_actual"]          = ds.id_actual;
         j["imu_accel_x"]        = ds.imu_accel_x;
         j["imu_accel_y"]        = ds.imu_accel_y;
+        j["imu_accel_z"]        = ds.imu_accel_z;
+        j["imu_gyro_x"]         = ds.imu_gyro_x;
+        j["imu_gyro_y"]         = ds.imu_gyro_y;
+        j["imu_gyro_z"]         = ds.imu_gyro_z;
         j["iq_command"]         = ds.iq_command;
         j["id_command"]         = ds.id_command;
         j["motor_temp_2"]         = ds.motor_temp_2;

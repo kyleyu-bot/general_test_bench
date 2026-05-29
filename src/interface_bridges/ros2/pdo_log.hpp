@@ -44,6 +44,10 @@ struct PdoLogRecord {
     float    main_tx_id_actual           = 0.f;  ///< 0x203C  (A)
     uint16_t main_tx_imu_accel_x         = 0;    ///< 0x218A
     uint16_t main_tx_imu_accel_y         = 0;    ///< 0x218B
+    uint16_t main_tx_imu_accel_z         = 0;    ///< 0x218C
+    uint16_t main_tx_imu_gyro_x          = 0;    ///< 0x218D
+    uint16_t main_tx_imu_gyro_y          = 0;    ///< 0x218E
+    uint16_t main_tx_imu_gyro_z          = 0;    ///< 0x218F
     float    main_tx_iq_command          = 0.f;  ///< 0x2072  (A)
     float    main_tx_id_command          = 0.f;  ///< 0x2073  (A)
     float    main_tx_motor_temp_2        = 0.f;  ///< 0x2065  (°C)
@@ -83,6 +87,10 @@ struct PdoLogRecord {
     float    dut_tx_id_actual            = 0.f;
     uint16_t dut_tx_imu_accel_x          = 0;    ///< 0x218A
     uint16_t dut_tx_imu_accel_y          = 0;    ///< 0x218B
+    uint16_t dut_tx_imu_accel_z          = 0;    ///< 0x218C
+    uint16_t dut_tx_imu_gyro_x           = 0;    ///< 0x218D
+    uint16_t dut_tx_imu_gyro_y           = 0;    ///< 0x218E
+    uint16_t dut_tx_imu_gyro_z           = 0;    ///< 0x218F
     float    dut_tx_iq_command           = 0.f;
     float    dut_tx_id_command           = 0.f;
     float    dut_tx_motor_temp_2         = 0.f;  ///< 0x2065  (°C)
@@ -122,7 +130,7 @@ inline constexpr const char* PDO_LOG_CSV_HEADER =
     "main_tx_power_stage_temp_3,main_tx_torque_nm,main_tx_motor_temp,main_tx_error_code,"
     "main_tx_motor_velocity,main_tx_input_enc_pos,main_tx_position_setpoint,"
     "main_tx_velocity_setpoint,main_tx_iq_actual,main_tx_id_actual,"
-    "main_tx_imu_accel_x,main_tx_imu_accel_y,main_tx_iq_command,main_tx_id_command,main_tx_motor_temp_2,main_tx_power_stage_temp_1,main_tx_power_stage_temp_2,"
+    "main_tx_imu_accel_x,main_tx_imu_accel_y,main_tx_imu_accel_z,main_tx_imu_gyro_x,main_tx_imu_gyro_y,main_tx_imu_gyro_z,main_tx_iq_command,main_tx_id_command,main_tx_motor_temp_2,main_tx_power_stage_temp_1,main_tx_power_stage_temp_2,"
     // main rx
     "main_rx_mode_of_operation,main_rx_target_position,main_rx_target_velocity,"
     "main_rx_torque_command,main_rx_iq_command,main_rx_torque_kp,main_rx_torque_max_out,main_rx_torque_min_out,"
@@ -133,7 +141,7 @@ inline constexpr const char* PDO_LOG_CSV_HEADER =
     "dut_tx_power_stage_temp_3,dut_tx_torque_nm,dut_tx_motor_temp,dut_tx_error_code,"
     "dut_tx_motor_velocity,dut_tx_input_enc_pos,dut_tx_position_setpoint,"
     "dut_tx_velocity_setpoint,dut_tx_iq_actual,dut_tx_id_actual,"
-    "dut_tx_imu_accel_x,dut_tx_imu_accel_y,dut_tx_iq_command,dut_tx_id_command,dut_tx_motor_temp_2,dut_tx_power_stage_temp_1,dut_tx_power_stage_temp_2,"
+    "dut_tx_imu_accel_x,dut_tx_imu_accel_y,dut_tx_imu_accel_z,dut_tx_imu_gyro_x,dut_tx_imu_gyro_y,dut_tx_imu_gyro_z,dut_tx_iq_command,dut_tx_id_command,dut_tx_motor_temp_2,dut_tx_power_stage_temp_1,dut_tx_power_stage_temp_2,"
     // dut rx
     "dut_rx_mode_of_operation,dut_rx_target_position,dut_rx_target_velocity,"
     "dut_rx_torque_command,dut_rx_iq_command,dut_rx_torque_kp,dut_rx_torque_max_out,dut_rx_torque_min_out,"
