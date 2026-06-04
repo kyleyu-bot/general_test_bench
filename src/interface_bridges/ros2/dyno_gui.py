@@ -645,10 +645,13 @@ class DynoCommander(Node):
             max_torque = limits.get("torque_max", 0.0)
             if max_torque > 0.0:
                 return (-max_torque, max_torque, 0.0)
+        elif field_type == "torque_max":
+            current = limits.get(field_type, 0.0)
+            return (0.0, 200.0, current)   # A — wide range for current clamp (default ±60 A)
         elif field_type == "torque_min":
             current = limits.get(field_type, 0.0)
-            return (-20.0, 0.0, current)   # negative clamp — must allow negative
-        elif field_type in ("torque_kp", "torque_max",
+            return (-200.0, 0.0, current)  # A — negative clamp, wide range
+        elif field_type in ("torque_kp",
                             "vel_kp", "vel_ki", "vel_kd",
                             "pos_kp", "pos_ki", "pos_kd"):
             current = limits.get(field_type, 0.0)

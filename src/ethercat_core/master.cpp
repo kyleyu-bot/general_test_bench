@@ -327,7 +327,7 @@ void EthercatMaster::configurePdoMapping(const SlaveConfig& cfg, int soem_idx) {
             int ret = ec_SDOwrite(
                 static_cast<uint16>(soem_idx),
                 pm.index, pm.subindex,
-                FALSE, pm.size, buf, EC_TIMEOUTRET
+                FALSE, pm.size, buf, EC_TIMEOUTRXM
             );
             if (ret > 0) {
                 ok = true;

@@ -46,7 +46,7 @@ static void onSignal(int) { g_shutdown.store(true); }
 
 // ── Argument defaults ─────────────────────────────────────────────────────────
 
-static constexpr const char* DEFAULT_TOPOLOGY = "config/ethercat_device_config/topology.dyno2.template6.json";
+static constexpr const char* DEFAULT_TOPOLOGY = "config/ethercat_device_config/topology.dyno2.template7.json";
 static constexpr const char* DEFAULT_SLAVE    = "digital_IO";
 static constexpr double      DEFAULT_HOLD_S   = 60.0;
 static constexpr double      DEFAULT_PRINT_HZ = 2.0;
@@ -141,6 +141,13 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "Failed to load topology '%s': %s\n", args.topology.c_str(), e.what());
         return 1;
     }
+
+    // Keep only the target EL2004 slave — skip drive PDO mapping entirely.
+    cfg.slaves.erase(
+        std::remove_if(cfg.slaves.begin(), cfg.slaves.end(),
+            [&args](const SlaveConfig& sc) { return sc.name != args.slave; }),
+        cfg.slaves.end()
+    );
 
     EthercatMaster master(cfg, ethercat_core::makeDefaultAdapterFactory());
     MasterRuntime* rt = nullptr;
