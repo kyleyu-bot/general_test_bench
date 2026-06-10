@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ### ===== CONFIG =====
-NIC="enp47s0"
+NIC="ecat0"
 RT_CPU="2"
 COMBINED_QUEUES="1"
 
