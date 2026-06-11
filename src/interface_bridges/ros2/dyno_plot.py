@@ -108,7 +108,13 @@ class DataStore:
                 self._fields.setdefault(topic, [])
                 if field not in self._fields[topic]:
                     self._fields[topic].append(field)
-            self._ts[key].append(t)
+            # Keep timestamps monotonic — get() binary-searches the buffer.
+            # Publisher-time mapping (PubClockMapper) can step a stamp slightly
+            # backwards during warm-up/resync; clamp instead of corrupting order.
+            ts_buf = self._ts[key]
+            if ts_buf and t < ts_buf[-1]:
+                t = ts_buf[-1]
+            ts_buf.append(t)
             self._vs[key].append(value)
 
     # ── read ───────────────────────────────────────────────────────────────────
@@ -148,12 +154,36 @@ class DataStore:
 
 # ── ROS2 subscriber node ───────────────────────────────────────────────────────
 
+class PubClockMapper:
+    """Map publisher steady_clock seconds ("t" in the JSON) → local
+    time.monotonic seconds.
+
+    offset = running min of (arrival − t_pub) ≈ transport-delay floor.  Both
+    clocks are monotonic, so the offset is stable; stamping with t_pub+offset
+    removes the burstiness of GIL/DDS-delayed callback arrival times.  If the
+    bridge restarts, its clock origin changes and (arrival − t_pub) jumps —
+    re-sync when it drifts more than RESYNC_S above the tracked floor.
+    """
+    RESYNC_S = 5.0
+
+    def __init__(self):
+        self._offset: float | None = None
+
+    def map(self, t_pub: float, arrival: float) -> float:
+        d = arrival - t_pub
+        if self._offset is None or d < self._offset or d - self._offset > self.RESYNC_S:
+            self._offset = d
+        return t_pub + self._offset
+
+
 class DynoPlotNode(Node):
     """Subscribes to all /dyno/* topics and pushes data into the DataStore."""
 
     def __init__(self, store: DataStore):
         super().__init__("dyno_plot")
         self._store = store
+        # One bridge process → one publisher clock, shared across JSON topics.
+        self._tmap = PubClockMapper()
 
         for topic in JSON_TOPICS:
             self.create_subscription(
@@ -177,9 +207,18 @@ class DynoPlotNode(Node):
             data = json.loads(msg.data)
         except Exception:
             return
+        # Prefer the publisher-side timestamp when present (new bridge);
+        # fall back to arrival time for older publishers / GUI-side topics.
+        t_pub = data.get("t")
+        if isinstance(t_pub, (int, float)):
+            stamp = self._tmap.map(float(t_pub), now)
+        else:
+            stamp = now
         for field, value in data.items():
+            if field == "t":
+                continue  # bookkeeping, not a plottable signal
             try:
-                self._store.push(topic, field, now, float(value))
+                self._store.push(topic, field, stamp, float(value))
             except (TypeError, ValueError):
                 pass
 

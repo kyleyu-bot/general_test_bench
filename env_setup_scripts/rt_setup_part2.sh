@@ -24,7 +24,15 @@ cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor | sort | uniq -c
 
 ### 3. Force NIC to a single combined queue
 echo "[3] Setting $NIC to combined queue count = $COMBINED_QUEUES ..."
-sudo ethtool -L "$NIC" combined "$COMBINED_QUEUES"
+# Skip the no-op set: some drivers return an error when the requested queue
+# count equals the current one, which would abort this script (set -e)
+# before the IRQ pinning below.
+cur_combined=$(sudo ethtool -l "$NIC" | awk '/^Current/{f=1} f && /^Combined:/{print $2; exit}')
+if [[ "$cur_combined" != "$COMBINED_QUEUES" ]]; then
+  sudo ethtool -L "$NIC" combined "$COMBINED_QUEUES"
+else
+  echo "Combined queues already $COMBINED_QUEUES — skipping."
+fi
 
 echo "Channel status:"
 sudo ethtool -l "$NIC"

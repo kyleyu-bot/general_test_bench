@@ -12,6 +12,7 @@ extern "C" {
 #include <nlohmann/json.hpp>
 
 #include <any>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <sstream>
@@ -481,6 +482,10 @@ std::string DualNovantaTestbench::makeDriveJson(
     const DriveGains& gains)
 {
     json j;
+    // Publisher-side timestamp (steady_clock seconds) — lets plotting clients
+    // reconstruct true sample spacing instead of bursty arrival times.
+    j["t"] = std::chrono::duration<double>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
     const int al_raw = (soem_idx >= 1) ? static_cast<int>(ec_slave[soem_idx].state) : 0;
     j["al"]     = alStateName(al_raw);
     j["al_num"] = al_raw & 0x0F;

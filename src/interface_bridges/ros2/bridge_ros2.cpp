@@ -141,6 +141,14 @@ static SdoRequest   g_sdo_req;
 
 // ── ROS2 node ─────────────────────────────────────────────────────────────────
 
+// Publisher-side timestamp embedded as "t" in the JSON payloads so plotting
+// clients can reconstruct true sample spacing instead of trusting bursty
+// DDS/GIL-delayed arrival times.
+static double monotonicSeconds() {
+    return std::chrono::duration<double>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
 class DynoBridgeNode : public rclcpp::Node {
 public:
     DynoBridgeNode() : Node("dyno_ros2_bridge") {
@@ -340,6 +348,7 @@ public:
                 {"cycle",   cycle},
                 {"wkc",     wkc},
                 {"cycle_us", cycle_us},
+                {"t",       monotonicSeconds()},
             }.dump();
             pub_stats_->publish(msg);
         }
@@ -392,6 +401,7 @@ public:
              cmd.main_speed, cmd.main_position, cmd.main_torque, cmd.main_current);
         fill(j, "dut_",  cmd.dut_fg_enable,  cmd.dut_fg_control_type,  dut_fg_out,
              cmd.dut_speed,  cmd.dut_position,  cmd.dut_torque,  cmd.dut_current);
+        j["t"] = monotonicSeconds();
 
         std_msgs::msg::String msg;
         msg.data = j.dump();
@@ -787,6 +797,8 @@ int main(int argc, char** argv) {
 
     const auto   t0         = std::chrono::steady_clock::now();
     const double pub_period = 1.0 / std::max(pub_hz, 1.0);
+    const auto   pub_period_d = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+        std::chrono::duration<double>(pub_period));
     auto         next_pub   = t0;
 
 
@@ -1061,15 +1073,21 @@ int main(int argc, char** argv) {
             if (debug_print)
                 testbench.printDebug(cur_status, cur_stats, cmd, enc, ch1_t, ch2_t);
 
-            next_pub += std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                std::chrono::duration<double>(pub_period));
+            next_pub += pub_period_d;
+            // After a stall (SDO ops, pre-OP toggles, scheduler gaps) do not
+            // burst catch-up publishes — resynchronize to now instead.
+            if (next_pub < now - pub_period_d) next_pub = now;
         } catch (const std::exception& e) {
             RCLCPP_ERROR(node->get_logger(), "Publish exception: %s", e.what());
         } catch (...) {
             RCLCPP_ERROR(node->get_logger(), "Publish unknown exception");
         } }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        // Wake exactly at next_pub when it is <1 ms away (even publish
+        // spacing) while still iterating at ~1 kHz for SDO servicing.
+        std::this_thread::sleep_until(std::min(
+            next_pub,
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(1)));
     }
 
     // Shutdown: do not send any DS402 disable commands before stopping.

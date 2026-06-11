@@ -48,25 +48,29 @@ sudo -A pkill -f bridge_ros2 2>/dev/null || true
 sudo -A pkill -f dyno_gui.py  2>/dev/null || true
 sleep 0.3
 
-# Run realtime environment setup once per boot (NIC/IRQ tuning, CPU governor).
-# /tmp is cleared on reboot so this naturally re-runs after each restart.
-RT_STATUS_FILE="/tmp/.dyno_rt_setup_${USER}"
-if [ ! -f "$RT_STATUS_FILE" ]; then
+# Verify realtime tuning at every launch (NIC/IRQ pinning, CPU governor,
+# irqbalance); heal it only when something is off.  No prompt when tuned.
+# When invoked via launch_dyno.sh the environment is already healed, so this
+# check passes instantly; standalone invocations stay self-contained.
+CHECK_RT="$REPO_ROOT/env_setup_scripts/check_rt_env.sh"
+if ! bash "$CHECK_RT"; then
     RT_ASKPASS="$HOME/.local/bin/dyno-askpass-rt"
-    if [ ! -f "$RT_ASKPASS" ]; then
-        mkdir -p "$HOME/.local/bin"
-        cat > "$RT_ASKPASS" <<'EOF'
+    mkdir -p "$HOME/.local/bin"
+    cat > "$RT_ASKPASS" <<'EOF'
 #!/bin/bash
 zenity --password \
     --title="Dyno — Realtime Setup" \
-    --text="Enter password to configure realtime kernel settings.\nThis prompt appears once per boot." \
+    --text="Enter password to configure realtime kernel settings.\nThis prompt appears when realtime tuning needs to be (re)applied." \
     2>/dev/null
 EOF
-        chmod +x "$RT_ASKPASS"
-    fi
-    SUDO_ASKPASS="$RT_ASKPASS" sudo -A bash "$REPO_ROOT/env_setup_scripts/env_setup.sh"
-    touch "$RT_STATUS_FILE"
+    chmod +x "$RT_ASKPASS"
+    SUDO_ASKPASS="$RT_ASKPASS" sudo -A bash "$REPO_ROOT/env_setup_scripts/env_setup.sh" || true
     sleep 2
+    if ! bash "$CHECK_RT"; then
+        zenity --warning --title="Dyno — Realtime Setup" \
+            --text="Realtime tuning could not be fully applied.\nEtherCAT cycle timing may be degraded — see terminal output." \
+            2>/dev/null || true
+    fi
 fi
 
 sudo -A \

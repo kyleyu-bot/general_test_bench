@@ -36,13 +36,17 @@ if [[ $# -gt 0 ]]; then
     esac
 fi
 
+SETUP_FAILED=0
 run_step() {
     local label="$1"
     shift
 
     echo
     echo "==> ${label}"
-    "$@"
+    if ! "$@"; then
+        echo "ERROR: step failed: ${label}" >&2
+        SETUP_FAILED=1
+    fi
 }
 
 # Python/pysoem venv no longer needed — C++ stack uses SOEM directly.
@@ -61,7 +65,11 @@ run_step "Applying NIC/IRQ realtime setup" \
     "${SCRIPT_DIR}/rt_setup_part2.sh"
 
 echo
-echo "Environment setup complete."
+if [[ ${SETUP_FAILED} -ne 0 ]]; then
+    echo "Environment setup FAILED — one or more steps did not complete." >&2
+else
+    echo "Environment setup complete."
+fi
 
 # ── ROS2 environment ──────────────────────────────────────────────────────────
 # These only take effect in the calling shell when this script is sourced:
@@ -78,4 +86,11 @@ if [[ -f /opt/ros/humble/setup.bash ]]; then
     echo "Run the ROS2 bridge with: sudo -E ./build/dyno_ros2_bridge/bridge_ros2"
 else
     echo "ROS2 Humble not found at /opt/ros/humble — skipping ROS2 setup."
+fi
+
+# Propagate step failures to callers (launchers re-check and warn).
+# 'return' when sourced, 'exit' when executed — preserves the no-set-e
+# contract for interactive sourcing noted in the header.
+if [[ ${SETUP_FAILED} -ne 0 ]]; then
+    return 1 2>/dev/null || exit 1
 fi
