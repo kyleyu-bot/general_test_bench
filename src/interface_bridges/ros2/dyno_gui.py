@@ -1905,6 +1905,7 @@ class DynoWindow(QMainWindow):
         self._bridge_started_at       = time.monotonic()  # last launch time
         self._bridge_restart_deadline = None  # monotonic; None = no restart pending
         self._bridge_fast_crashes     = 0     # consecutive crashes soon after launch
+        self._bridge_seen_state       = ""    # last lifecycle state reported in status bar
         self._main_enabled   = False
         self._dut_enabled    = False
         self._hold_output1   = False
@@ -3256,6 +3257,7 @@ class DynoWindow(QMainWindow):
             return
         a = self._bridge_args
         self._bridge_started_at = time.monotonic()
+        self._bridge_seen_state = ""
         self._bridge_proc = launch_bridge(
             a.bridge, a.topology, a.fault_reset_s, a.pub_hz, a.debug)
         self._update_bridge_status()
@@ -3322,6 +3324,15 @@ class DynoWindow(QMainWindow):
                     f"Bridge: ◌ PID {proc.pid} — waiting for EtherCAT bus…")
             else:
                 self._bridge_status_lbl.setText(f"Bridge: ● PID {proc.pid}")
+            # Report lifecycle transitions once in the main status bar so a
+            # stale "bus lost" crash message clears when the bridge recovers.
+            # ("bus_lost" is owned by the crash branch below.)
+            if state and state != self._bridge_seen_state:
+                self._bridge_seen_state = state
+                if state == "waiting_for_bus":
+                    self.set_status("bridge_ros2 waiting for EtherCAT bus…")
+                elif state == "running":
+                    self.set_status("bridge_ros2 connected — EtherCAT bus running")
             return
 
         # ── Bridge exited on its own ──────────────────────────────────────────
