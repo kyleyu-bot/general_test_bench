@@ -35,6 +35,8 @@ import threading
 import time
 import traceback
 
+from collections import deque
+
 # ── Qt ────────────────────────────────────────────────────────────────────────
 try:
     from PyQt5.QtCore    import Qt, QTimer, QMimeData, QByteArray, QRegularExpression, QObject, pyqtSignal
@@ -62,6 +64,7 @@ except ImportError:
 try:
     import rclpy
     from rclpy.node   import Node
+    from rclpy.qos    import QoSProfile, DurabilityPolicy
     from std_msgs.msg import String as StringMsg, Float64 as Float64Msg
 except ImportError:
     print("ERROR: rclpy not found.  source /opt/ros/humble/setup.bash", file=sys.stderr)
@@ -82,6 +85,13 @@ NUM_SLOTS      = 9   # number of slider slots shown
 NUM_SPIN_SLOTS  = 6   # spinbox slots per row
 NUM_SPIN_ROWS   = 2   # number of spinbox rows below sliders
 SDO_TIMEOUT_S   = 3.0 # seconds before an SDO request is declared timed out
+
+# Bridge supervision — auto-restart bridge_ros2 after a recoverable exit.
+BRIDGE_RESTART_DELAY_S     = 3.0   # delay before auto-restarting a crashed bridge
+BRIDGE_FAST_CRASH_WINDOW_S = 10.0  # a crash this soon after launch counts as "fast"
+BRIDGE_MAX_FAST_CRASHES    = 5     # consecutive fast crashes before giving up
+BRIDGE_LOG_TAIL_LINES      = 200   # bridge output lines kept for crash diagnostics
+BRIDGE_EXIT_BUS_LOST       = 2     # bridge exit code: EtherCAT bus lost (restartable)
 
 # ── Novanta error code lookup ─────────────────────────────────────────────────
 
@@ -205,8 +215,8 @@ COMMAND_FIELDS = [
     ("dut_current",     "DUT Current"),
     # Control gains
     ("main_torque_kp",  "Main Torque Kp"),
-    ("main_torque_max", "Main Torque Max"),
-    ("main_torque_min", "Main Torque Min"),
+    ("main_trq_loop_max_amps", "Main Trq Loop Max (A)"),
+    ("main_trq_loop_min_amps", "Main Trq Loop Min (A)"),
     ("main_vel_kp",     "Main Vel Kp"),
     ("main_vel_ki",     "Main Vel Ki"),
     ("main_vel_kd",     "Main Vel Kd"),
@@ -214,8 +224,8 @@ COMMAND_FIELDS = [
     ("main_pos_ki",     "Main Pos Ki"),
     ("main_pos_kd",     "Main Pos Kd"),
     ("dut_torque_kp",   "DUT Torque Kp"),
-    ("dut_torque_max",  "DUT Torque Max"),
-    ("dut_torque_min",  "DUT Torque Min"),
+    ("dut_trq_loop_max_amps",  "DUT Trq Loop Max (A)"),
+    ("dut_trq_loop_min_amps",  "DUT Trq Loop Min (A)"),
     ("dut_vel_kp",      "DUT Vel Kp"),
     ("dut_vel_ki",      "DUT Vel Ki"),
     ("dut_vel_kd",      "DUT Vel Kd"),
@@ -226,10 +236,10 @@ COMMAND_FIELDS = [
 
 # Fields that use a float spinbox instead of the integer slider
 GAIN_FIELDS = {
-    "main_torque_kp", "main_torque_max", "main_torque_min",
-    "main_vel_kp",    "main_vel_ki",     "main_vel_kd",
-    "main_pos_kp",    "main_pos_ki",     "main_pos_kd",
-    "dut_torque_kp",  "dut_torque_max",  "dut_torque_min",
+    "main_torque_kp", "main_trq_loop_max_amps", "main_trq_loop_min_amps",
+    "main_vel_kp",    "main_vel_ki",            "main_vel_kd",
+    "main_pos_kp",    "main_pos_ki",            "main_pos_kd",
+    "dut_torque_kp",  "dut_trq_loop_max_amps",  "dut_trq_loop_min_amps",
     "dut_vel_kp",     "dut_vel_ki",      "dut_vel_kd",
     "dut_pos_kp",     "dut_pos_ki",      "dut_pos_kd",
 }
@@ -433,7 +443,7 @@ class DynoCommander(Node):
         _empty_limits = {
             "max_velocity_abs": 0.0, "min_position": 0.0, "max_position": 0.0,
             "max_current_a": 0.0,
-            "torque_kp": 0.0, "torque_max": 0.0, "torque_min": 0.0,
+            "torque_kp": 0.0, "trq_loop_max_amps": 0.0, "trq_loop_min_amps": 0.0,
             "vel_kp": 0.0, "vel_ki": 0.0, "vel_kd": 0.0,
             "pos_kp": 0.0, "pos_ki": 0.0, "pos_kd": 0.0,
         }
@@ -482,6 +492,15 @@ class DynoCommander(Node):
         self.create_subscription(StringMsg, "/dyno/bus_status",
             self._on_bus_status, 10)
 
+        # Bridge lifecycle state ("waiting_for_bus" / "running" / "bus_lost").
+        # Transient-local QoS matches the bridge's latched publisher so a state
+        # published before this node discovered the bridge is still delivered.
+        self._bridge_state:      str   = ""
+        self._bridge_state_recv: float = 0.0
+        self.create_subscription(StringMsg, "/dyno/bridge_state",
+            self._on_bridge_state,
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+
         self._pub_period_s = 1.0 / max(pub_hz, 1.0)
         self.create_timer(self._pub_period_s, self._publish)
 
@@ -525,8 +544,8 @@ class DynoCommander(Node):
                                       data.get("max_position", 0))),
             "max_current_a":     float(data.get("max_current_a", 0.0)),
             "torque_kp":  float(data.get("torque_kp",  0.0)),
-            "torque_max": float(data.get("torque_max", 0.0)),
-            "torque_min": float(data.get("torque_min", 0.0)),
+            "trq_loop_max_amps": float(data.get("trq_loop_max_amps", 0.0)),
+            "trq_loop_min_amps": float(data.get("trq_loop_min_amps", 0.0)),
             "vel_kp":     float(data.get("vel_kp",     0.0)),
             "vel_ki":     float(data.get("vel_ki",     0.0)),
             "vel_kd":     float(data.get("vel_kd",     0.0)),
@@ -569,6 +588,17 @@ class DynoCommander(Node):
             return
         with self._limits_lock:
             self._pending_bus_status = data
+
+    def _on_bridge_state(self, msg: StringMsg) -> None:
+        with self._limits_lock:
+            self._bridge_state      = msg.data
+            self._bridge_state_recv = time.monotonic()
+
+    def get_bridge_state(self, after: float = 0.0) -> str:
+        """Latest bridge lifecycle state, or "" if none received since `after`
+        (filters latched messages from a previous bridge incarnation)."""
+        with self._limits_lock:
+            return self._bridge_state if self._bridge_state_recv >= after else ""
 
     def pop_bus_status(self):
         with self._limits_lock:
@@ -642,13 +672,13 @@ class DynoCommander(Node):
             return (-CURRENT_COMMAND_FALLBACK_LIMIT_A,
                     CURRENT_COMMAND_FALLBACK_LIMIT_A, 0.0)
         elif field_type == "torque":
-            max_torque = limits.get("torque_max", 0.0)
+            max_torque = limits.get("trq_loop_max_amps", 0.0)
             if max_torque > 0.0:
                 return (-max_torque, max_torque, 0.0)
-        elif field_type == "torque_max":
+        elif field_type == "trq_loop_max_amps":
             current = limits.get(field_type, 0.0)
             return (0.0, 200.0, current)   # A — wide range for current clamp (default ±60 A)
-        elif field_type == "torque_min":
+        elif field_type == "trq_loop_min_amps":
             current = limits.get(field_type, 0.0)
             return (-200.0, 0.0, current)  # A — negative clamp, wide range
         elif field_type in ("torque_kp",
@@ -1871,6 +1901,10 @@ class DynoWindow(QMainWindow):
         self._scripts_dir    = scripts_dir
         self._bridge_proc    = bridge_proc
         self._bridge_args    = bridge_args
+        # Bridge supervision state (see _poll_bridge).
+        self._bridge_started_at       = time.monotonic()  # last launch time
+        self._bridge_restart_deadline = None  # monotonic; None = no restart pending
+        self._bridge_fast_crashes     = 0     # consecutive crashes soon after launch
         self._main_enabled   = False
         self._dut_enabled    = False
         self._hold_output1   = False
@@ -2657,8 +2691,11 @@ class DynoWindow(QMainWindow):
                 return
             sudo_user = (os.environ.get("SUDO_USER")
                          or os.environ.get("DYNO_ORIGINAL_USER"))
-            # rclone copy: upload new/changed files only, never delete destination
-            cmd = ["rclone", "copy", src, "foundation_gdrive_hw_actuator:actuator_test_log",
+            # rclone copy: upload new/changed files only, never delete destination.
+            # Destination is a folder in a shared drive, addressed by its folder ID;
+            # --drive-root-folder-id overrides the remote's configured team_drive.
+            cmd = ["rclone", "copy", src, "foundation_gdrive_hw_actuator:",
+                   "--drive-root-folder-id", "1ujXWfpsNtjhxY_UE0R_milGU0CNUkXU1",
                    "--transfers=4", "--checkers=8"]
             if sudo_user:
                 cmd = ["sudo", "-u", sudo_user, "-H"] + cmd
@@ -3167,6 +3204,37 @@ class DynoWindow(QMainWindow):
 
     # ── Bridge management ─────────────────────────────────────────────────────
 
+    def _force_disable_drives(self, reason: str) -> None:
+        """Safety: the bridge died or is being restarted — make sure the drives
+        cannot spin up on their own when a (new) bridge instance connects."""
+        print(f"[dyno_gui] Force-disabling drives: {reason}")
+        if self._script_running:
+            # Restores GUI control and unchecks the enable buttons.
+            self._script_panel._abort_script()
+        self._main_enabled = False
+        self._dut_enabled  = False
+        self._main_enable_btn.setChecked(False)
+        self._main_enable_btn.setText("Main Enable")
+        self._dut_enable_btn.setChecked(False)
+        self._dut_enable_btn.setText("DUT Enable")
+        self._main_zero()
+        self._dut_zero()
+        for drive in ("main", "dut"):
+            self._fg_state[drive]["enable"] = False
+        self._fg_enable_chk.setChecked(False)
+        _none_idx = next(i for i, (_, v) in enumerate(DS402_MODES) if v == 0)
+        self._main_mode_combo.setCurrentIndex(_none_idx)
+        self._dut_mode_combo.setCurrentIndex(_none_idx)
+        # Push the disabled state directly — the 200 Hz _push_command tick may
+        # still be paused if a script was running.
+        self._cmd.set_command(
+            numeric     = {k: 0 for k in ALL_CMD_KEYS if k not in GAIN_FIELDS},
+            main_enable = False,
+            dut_enable  = False,
+            main_mode   = 0,
+            dut_mode    = 0,
+        )
+
     def _stop_bridge(self):
         """Send SIGINT to bridge, wait up to 5 s, then kill. No-op if not running."""
         proc = self._bridge_proc
@@ -3181,19 +3249,33 @@ class DynoWindow(QMainWindow):
         print("[dyno_gui] bridge_ros2 stopped.")
         self._bridge_proc = None
 
-    def _on_bridge_start(self):
+    def _start_bridge_proc(self):
+        """Launch the bridge if not already running.  Shared by the Start
+        button and the auto-restart path — does NOT reset the crash counter."""
         if self._bridge_proc and self._bridge_proc.poll() is None:
             return
         a = self._bridge_args
+        self._bridge_started_at = time.monotonic()
         self._bridge_proc = launch_bridge(
             a.bridge, a.topology, a.fault_reset_s, a.pub_hz, a.debug)
         self._update_bridge_status()
 
+    def _on_bridge_start(self):
+        self._bridge_fast_crashes     = 0
+        self._bridge_restart_deadline = None
+        self._start_bridge_proc()
+
     def _on_bridge_stop(self):
+        # Manual Stop also cancels any pending auto-restart.
+        self._bridge_restart_deadline = None
+        self._bridge_fast_crashes     = 0
+        self._force_disable_drives("bridge stopped by user")
         self._stop_bridge()
         self._update_bridge_status()
 
     def _on_bridge_restart(self):
+        self._bridge_restart_deadline = None
+        self._force_disable_drives("bridge restart requested")
         self._stop_bridge()
         time.sleep(0.5)
         self._on_bridge_start()
@@ -3216,12 +3298,67 @@ class DynoWindow(QMainWindow):
     def _poll_bridge(self):
         if self._bridge_args is None:
             return
+
+        # Auto-restart pending: count down on the 500 ms poll tick.
+        if self._bridge_restart_deadline is not None:
+            remaining = self._bridge_restart_deadline - time.monotonic()
+            if remaining > 0:
+                self._bridge_status_lbl.setText(
+                    f"Bridge: ↻ restarting in {remaining:.0f} s")
+                return
+            self._bridge_restart_deadline = None
+            self._start_bridge_proc()
+            return
+
         proc = self._bridge_proc
-        if proc is not None and proc.poll() is not None:
-            self._bridge_proc = None
-            self._bridge_status_lbl.setText(
-                f"Bridge: ✕ Crashed (exit {proc.returncode})")
-            self.set_status(f"bridge_ros2 exited unexpectedly (code {proc.returncode})")
+        if proc is None:
+            return
+
+        if proc.poll() is None:
+            # Alive — surface the init-wait phase while slaves boot.
+            state = self._cmd.get_bridge_state(after=self._bridge_started_at)
+            if state == "waiting_for_bus":
+                self._bridge_status_lbl.setText(
+                    f"Bridge: ◌ PID {proc.pid} — waiting for EtherCAT bus…")
+            else:
+                self._bridge_status_lbl.setText(f"Bridge: ● PID {proc.pid}")
+            return
+
+        # ── Bridge exited on its own ──────────────────────────────────────────
+        rc = proc.returncode
+        self._bridge_proc = None
+        self._force_disable_drives(f"bridge exited (code {rc})")
+        tail = list(getattr(proc, "log_tail", []))
+        last_line = next((l for l in reversed(tail) if l.strip()), "")
+
+        fast = (time.monotonic() - self._bridge_started_at) < BRIDGE_FAST_CRASH_WINDOW_S
+        self._bridge_fast_crashes = self._bridge_fast_crashes + 1 if fast else 1
+
+        # Exit 2 (bus lost) and signal deaths are worth retrying; exit 1 is a
+        # config error that a restart cannot fix.  sudo mirrors a child killed
+        # by signal N as exit 128+N; a signaled sudo itself shows as rc < 0.
+        recoverable = (rc == BRIDGE_EXIT_BUS_LOST) or (rc < 0) or (rc > 128)
+
+        if recoverable and self._bridge_fast_crashes < BRIDGE_MAX_FAST_CRASHES:
+            self._bridge_restart_deadline = time.monotonic() + BRIDGE_RESTART_DELAY_S
+            why = ("EtherCAT bus lost" if rc == BRIDGE_EXIT_BUS_LOST
+                   else f"crashed (exit {rc})")
+            self._bridge_status_lbl.setText(f"Bridge: ↻ {why} — restarting…")
+            self.set_status(
+                f"bridge_ros2 {why} — drives disabled, auto-restarting in "
+                f"{BRIDGE_RESTART_DELAY_S:.0f} s (Stop cancels)")
+            self._bridge_start_btn.setEnabled(False)
+            self._bridge_stop_btn.setEnabled(True)
+            self._bridge_restart_btn.setEnabled(False)
+        else:
+            if recoverable:
+                why = (f"crashed {self._bridge_fast_crashes} times in a row — "
+                       f"giving up; press Start to retry")
+            else:
+                why = "config error — check terminal output, then press Start"
+            self._bridge_status_lbl.setText(f"Bridge: ✕ Crashed (exit {rc})")
+            self.set_status(
+                f"bridge_ros2 exited (code {rc}) — {why}. {last_line[:120]}")
             self._bridge_start_btn.setEnabled(True)
             self._bridge_stop_btn.setEnabled(False)
             self._bridge_restart_btn.setEnabled(False)
@@ -3230,6 +3367,15 @@ class DynoWindow(QMainWindow):
 # ─────────────────────────────────────────────────────────────────────────────
 # Bridge subprocess management
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _bridge_output_reader(proc) -> None:
+    """Daemon thread: echo bridge output to the GUI terminal and keep a tail
+    on the Popen object for crash diagnostics.  Touches no Qt objects."""
+    for line in proc.stdout:
+        line = line.rstrip("\n")
+        print(f"[bridge] {line}")
+        proc.log_tail.append(line)
+
 
 def launch_bridge(bridge_path: str, topology: str, fault_reset_s: float,
                   pub_hz: float, debug: bool = False):
@@ -3252,7 +3398,11 @@ def launch_bridge(bridge_path: str, topology: str, fault_reset_s: float,
     env = os.environ.copy()
     if "SUDO_USER" in env:
         env.setdefault("DYNO_ORIGINAL_USER", env["SUDO_USER"])
-    proc = subprocess.Popen(cmd, env=env)
+    proc = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, bufsize=1)
+    proc.log_tail = deque(maxlen=BRIDGE_LOG_TAIL_LINES)
+    threading.Thread(target=_bridge_output_reader, args=(proc,),
+                     daemon=True).start()
     return proc
 
 

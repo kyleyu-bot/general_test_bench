@@ -525,8 +525,8 @@ std::string DualNovantaTestbench::makeDriveJson(
         j["max_current_a"]      = static_cast<double>(gains.max_current_a);
         // Control gains (current values being sent to drive)
         j["torque_kp"]  = static_cast<double>(gains.torque_kp);
-        j["torque_max"] = static_cast<double>(gains.torque_loop_max_output);
-        j["torque_min"] = static_cast<double>(gains.torque_loop_min_output);
+        j["trq_loop_max_amps"] = static_cast<double>(gains.torque_loop_max_output);
+        j["trq_loop_min_amps"] = static_cast<double>(gains.torque_loop_min_output);
         j["vel_kp"]     = static_cast<double>(gains.velocity_loop_kp);
         j["vel_ki"]     = static_cast<double>(gains.velocity_loop_ki);
         j["vel_kd"]     = static_cast<double>(gains.velocity_loop_kd);

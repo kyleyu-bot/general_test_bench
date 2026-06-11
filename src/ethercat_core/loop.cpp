@@ -171,7 +171,9 @@ SystemStatus EthercatLoop::getStatus() const {
 
 LoopStats EthercatLoop::stats() const {
     std::lock_guard<std::mutex> lk(mutex_);
-    return stats_;
+    LoopStats s = stats_;
+    s.callback_errors = callback_errors_.load(std::memory_order_relaxed);
+    return s;
 }
 
 void EthercatLoop::applyRtConfig() {
@@ -225,10 +227,32 @@ void EthercatLoop::runForever() {
         }
 
         if (cycle_callback_) {
-            SystemCommand next = cycle_callback_(cycle_status, cycle_stats);
-            std::lock_guard<std::mutex> lk(mutex_);
-            next.seq = stats_.cycle_count;
-            pending_command_ = std::move(next);
+            // The callback must never take down the RT thread: during a bus
+            // loss it may see stale/partial status and throw (bad_any_cast).
+            // Keep the previous pending_command_ — the drive PDO watchdog
+            // covers prolonged failure.
+            try {
+                SystemCommand next = cycle_callback_(cycle_status, cycle_stats);
+                std::lock_guard<std::mutex> lk(mutex_);
+                next.seq = stats_.cycle_count;
+                pending_command_ = std::move(next);
+            } catch (const std::exception& e) {
+                const uint64_t n =
+                    callback_errors_.fetch_add(1, std::memory_order_relaxed) + 1;
+                if (n == 1 || n % 1000 == 0) {
+                    std::fprintf(stderr,
+                        "[EthercatLoop] cycle callback exception (#%llu): %s\n",
+                        static_cast<unsigned long long>(n), e.what());
+                }
+            } catch (...) {
+                const uint64_t n =
+                    callback_errors_.fetch_add(1, std::memory_order_relaxed) + 1;
+                if (n == 1 || n % 1000 == 0) {
+                    std::fprintf(stderr,
+                        "[EthercatLoop] cycle callback unknown exception (#%llu)\n",
+                        static_cast<unsigned long long>(n));
+                }
+            }
         }
 
         prev_start_ns = start_ns;

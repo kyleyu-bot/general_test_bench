@@ -18,6 +18,7 @@ struct LoopStats {
     int64_t  last_dc_error_ns      = 0;
     int64_t  last_period_ns        = 0;
     int64_t  last_wakeup_latency_ns = 0;
+    uint64_t callback_errors       = 0;  // exceptions thrown by the cycle callback
 };
 
 struct LoopRtConfig {
@@ -79,6 +80,7 @@ private:
 
     std::thread        thread_;
     std::atomic<bool>  stop_flag_{false};
+    std::atomic<uint64_t> callback_errors_{0};
 
     CycleCallback      cycle_callback_;   // called from RT thread — must be cheap
 };

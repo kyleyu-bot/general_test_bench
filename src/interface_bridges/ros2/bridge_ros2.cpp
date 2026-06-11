@@ -71,6 +71,7 @@ extern "C" {
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <pthread.h>
 #include <sched.h>
@@ -84,6 +85,16 @@ using namespace ethercat_core::novanta::volcano;
 using Cia402State     = ethercat_core::ds402::Cia402State;
 using ModeOfOperation = ethercat_core::ds402::ModeOfOperation;
 using json            = nlohmann::json;
+
+// ── Exit codes / supervision constants ────────────────────────────────────────
+// Contract with dyno_gui.py: exit 1 = config error (don't auto-restart),
+// exit 2 = bus lost at runtime (supervisor should restart us).
+// "Bus not ready" at init never exits — we wait in-process.
+
+static constexpr int    EXIT_CONFIG_ERROR   = 1;
+static constexpr int    EXIT_BUS_LOST       = 2;
+static constexpr double INIT_RETRY_PERIOD_S = 2.0;  // wait between init attempts
+static constexpr double BUS_LOSS_GRACE_S    = 1.0;  // sustained bad WKC before exit
 
 // ── Signal handling ───────────────────────────────────────────────────────────
 
@@ -143,6 +154,9 @@ public:
         pub_sdo_   = create_publisher<std_msgs::msg::String>("/dyno/sdo_response",        10);
         pub_bus_   = create_publisher<std_msgs::msg::String>("/dyno/bus_status",          10);
         pub_rt_cmd_ = create_publisher<std_msgs::msg::String>("/dyno/rt_command",         10);
+        // Transient-local so a late-joining GUI sees the latest state.
+        pub_bridge_state_ = create_publisher<std_msgs::msg::String>(
+            "/dyno/bridge_state", rclcpp::QoS(1).transient_local());
 
         // Command subscriber
         sub_cmd_ = create_subscription<std_msgs::msg::String>(
@@ -171,8 +185,8 @@ public:
                     g_cmd_state.dut_mode      = static_cast<int8_t>(j.value("dut_mode",  static_cast<int>(ModeOfOperation::CYCLIC_SYNC_VELOCITY)));
                     // Gains: use current value as default so omitted fields persist
                     g_cmd_state.main_torque_kp      = j.value("main_torque_kp",      g_cmd_state.main_torque_kp);
-                    g_cmd_state.main_torque_max_out = j.value("main_torque_max",      g_cmd_state.main_torque_max_out);
-                    g_cmd_state.main_torque_min_out = j.value("main_torque_min",      g_cmd_state.main_torque_min_out);
+                    g_cmd_state.main_torque_max_out = j.value("main_trq_loop_max_amps", g_cmd_state.main_torque_max_out);
+                    g_cmd_state.main_torque_min_out = j.value("main_trq_loop_min_amps", g_cmd_state.main_torque_min_out);
                     g_cmd_state.main_vel_kp         = j.value("main_vel_kp",          g_cmd_state.main_vel_kp);
                     g_cmd_state.main_vel_ki         = j.value("main_vel_ki",          g_cmd_state.main_vel_ki);
                     g_cmd_state.main_vel_kd         = j.value("main_vel_kd",          g_cmd_state.main_vel_kd);
@@ -180,8 +194,8 @@ public:
                     g_cmd_state.main_pos_ki         = j.value("main_pos_ki",          g_cmd_state.main_pos_ki);
                     g_cmd_state.main_pos_kd         = j.value("main_pos_kd",          g_cmd_state.main_pos_kd);
                     g_cmd_state.dut_torque_kp       = j.value("dut_torque_kp",        g_cmd_state.dut_torque_kp);
-                    g_cmd_state.dut_torque_max_out  = j.value("dut_torque_max",       g_cmd_state.dut_torque_max_out);
-                    g_cmd_state.dut_torque_min_out  = j.value("dut_torque_min",       g_cmd_state.dut_torque_min_out);
+                    g_cmd_state.dut_torque_max_out  = j.value("dut_trq_loop_max_amps",  g_cmd_state.dut_torque_max_out);
+                    g_cmd_state.dut_torque_min_out  = j.value("dut_trq_loop_min_amps",  g_cmd_state.dut_torque_min_out);
                     g_cmd_state.dut_vel_kp          = j.value("dut_vel_kp",           g_cmd_state.dut_vel_kp);
                     g_cmd_state.dut_vel_ki          = j.value("dut_vel_ki",           g_cmd_state.dut_vel_ki);
                     g_cmd_state.dut_vel_kd          = j.value("dut_vel_kd",           g_cmd_state.dut_vel_kd);
@@ -280,6 +294,13 @@ public:
         std_msgs::msg::String out;
         out.data = jr.dump();
         pub_sdo_->publish(out);
+    }
+
+    // Lifecycle state for the GUI: "waiting_for_bus" / "running" / "bus_lost".
+    void publishBridgeState(const std::string& state) {
+        std_msgs::msg::String msg;
+        msg.data = state;
+        pub_bridge_state_->publish(msg);
     }
 
     void publishBusStatus() {
@@ -387,6 +408,7 @@ private:
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr   pub_sdo_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr   pub_bus_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr   pub_rt_cmd_;
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr   pub_bridge_state_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_cmd_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_sdo_;
     int drive_soem_idx_ = 1;
@@ -474,6 +496,16 @@ int main(int argc, char** argv) {
     const std::string cpu_affinity_str = get_str("cpu_affinity", "2");
     const bool        debug_print   = get_int("debug",         0) != 0;
 
+    // Use sigaction instead of std::signal so we reliably override the handler
+    // that rclcpp::init() installs via sigaction for SIGINT.  Installed before
+    // EtherCAT init so Stop works while we wait for the bus to come up.
+    struct sigaction sa{};
+    sa.sa_handler = onSignal;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGINT,  &sa, nullptr);
+    sigaction(SIGTERM, &sa, nullptr);
+
     // EtherCAT init.
     MasterConfig cfg;
     try {
@@ -487,24 +519,75 @@ int main(int argc, char** argv) {
 
     EthercatMaster master(cfg, ethercat_core::makeDefaultAdapterFactory());
     MasterRuntime* rt = nullptr;
-    try {
-        rt = &master.initialize();
-    } catch (const std::exception& e) {
-        RCLCPP_FATAL(node->get_logger(), "Master init failed: %s", e.what());
-        executor->cancel();
-        ros_thread.join();
-        return 1;
-    }
+    beckhoff::elm3002::Elm3002Adapter* elm3002 = nullptr;
 
-    // Required slaves — fatal if missing.
-    for (const auto& name : {drive_slave, encoder_slave, torque_slave, io_slave}) {
-        if (rt->adapters.find(name) == rt->adapters.end()) {
-            RCLCPP_FATAL(node->get_logger(), "Required slave '%s' not found in topology.", name.c_str());
+    // Interruptible pause between init attempts.
+    auto wait_retry = [&] {
+        node->publishBridgeState("waiting_for_bus");
+        for (int i = 0; i < static_cast<int>(INIT_RETRY_PERIOD_S * 10)
+                        && !g_shutdown.load() && rclcpp::ok(); ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    };
+
+    // Wait for the bus instead of dying: after a drive power cycle the slaves
+    // take seconds to boot, and the supervising GUI relies on this process to
+    // come up on its own once they are back.
+    while (!g_shutdown.load() && rclcpp::ok()) {
+        try {
+            rt = &master.initialize();
+        } catch (const BusNotReadyError& e) {
+            RCLCPP_WARN(node->get_logger(),
+                "EtherCAT bus not ready (%s) — retrying in %.0f s.",
+                e.what(), INIT_RETRY_PERIOD_S);
+            rt = nullptr;
+            wait_retry();
+            continue;
+        } catch (const std::exception& e) {
+            RCLCPP_FATAL(node->get_logger(), "Master init failed (config error): %s", e.what());
+            executor->cancel();
+            ros_thread.join();
+            rclcpp::shutdown();
+            return EXIT_CONFIG_ERROR;
+        }
+
+        // Required slaves — recoverable: drives may still be booting.
+        bool missing = false;
+        for (const auto& name : {drive_slave, encoder_slave, torque_slave, io_slave}) {
+            if (rt->adapters.find(name) == rt->adapters.end()) {
+                RCLCPP_WARN(node->get_logger(),
+                    "Required slave '%s' not on bus yet — retrying in %.0f s.",
+                    name.c_str(), INIT_RETRY_PERIOD_S);
+                missing = true;
+                break;
+            }
+        }
+        if (missing) {
+            master.close();
+            rt = nullptr;
+            wait_retry();
+            continue;
+        }
+
+        // Wrong device type at the torque position — config error.
+        elm3002 = dynamic_cast<beckhoff::elm3002::Elm3002Adapter*>(
+            rt->adapters.at(torque_slave).get());
+        if (!elm3002) {
+            RCLCPP_FATAL(node->get_logger(), "Slave '%s' is not an ELM3002.", torque_slave.c_str());
             master.close();
             executor->cancel();
             ros_thread.join();
-            return 1;
+            rclcpp::shutdown();
+            return EXIT_CONFIG_ERROR;
         }
+        break;  // init complete
+    }
+    if (rt == nullptr) {
+        // Shutdown requested while waiting for the bus.
+        executor->cancel();
+        ros_thread.join();
+        rclcpp::shutdown();
+        return 0;
     }
 
     // DUT is optional.
@@ -515,18 +598,14 @@ int main(int argc, char** argv) {
         RCLCPP_WARN(node->get_logger(), "DUT slave '%s' not found — running without DUT.", dut_slave.c_str());
     }
 
-    auto* elm3002 = dynamic_cast<beckhoff::elm3002::Elm3002Adapter*>(
-        rt->adapters.at(torque_slave).get());
-    if (!elm3002) {
-        RCLCPP_FATAL(node->get_logger(), "Slave '%s' is not an ELM3002.", torque_slave.c_str());
-        master.close();
-        executor->cancel();
-        ros_thread.join();
-        return 1;
-    }
-
     const int drive_soem_idx = rt->slave_index.at(drive_slave);
     const int dut_soem_idx   = dut_present ? rt->slave_index.at(dut_slave) : -1;
+
+    // SOEM convention: a fully healthy cyclic exchange returns this WKC.
+    // ec_group is populated by ec_config_map() during initialize() and already
+    // accounts for an absent optional DUT.
+    const int expected_wkc = ec_group[0].outputsWKC * 2 + ec_group[0].inputsWKC;
+    int exit_code = 0;
 
     RCLCPP_INFO(node->get_logger(),
         "[init] SOEM indices — %s=%d  %s=%d",
@@ -549,15 +628,6 @@ int main(int argc, char** argv) {
             }
         }
     }
-
-    // Use sigaction instead of std::signal so we reliably override the handler
-    // that rclcpp::init() installs via sigaction for SIGINT.
-    struct sigaction sa{};
-    sa.sa_handler = onSignal;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0;
-    sigaction(SIGINT,  &sa, nullptr);
-    sigaction(SIGTERM, &sa, nullptr);
 
     EthercatLoop loop(*rt, cfg.cycle_hz, rt_cfg);
 
@@ -721,8 +791,13 @@ int main(int argc, char** argv) {
 
 
     RCLCPP_INFO(node->get_logger(), "Entering main loop...");
+    node->publishBridgeState("running");
     int  debug_iter    = 0;
     auto main_loop_prev = std::chrono::steady_clock::now();
+
+    // Bus-health watchdog: time point since which the WKC has been below
+    // expected; empty while healthy or while the loop is deliberately stopped.
+    std::optional<std::chrono::steady_clock::time_point> bus_bad_since;
 
     while (!g_shutdown.load()) {
         const auto   now        = std::chrono::steady_clock::now();
@@ -894,6 +969,29 @@ int main(int argc, char** argv) {
         const SystemStatus cur_status = loop.getStatus();
         const LoopStats    cur_stats  = loop.stats();
 
+        // Bus-health watchdog.  Only meaningful while the RT loop runs — SDO
+        // and pre-op operations stop it via safe_stop(), which must not count
+        // as bus loss.  The grace period also absorbs the stale stats right
+        // after loop.start()/safe_start().
+        if (g_loop_running) {
+            if (cur_stats.last_wkc >= expected_wkc) {
+                bus_bad_since.reset();
+            } else if (!bus_bad_since) {
+                bus_bad_since = now;
+            } else if (std::chrono::duration<double>(now - *bus_bad_since).count()
+                       > BUS_LOSS_GRACE_S) {
+                RCLCPP_FATAL(node->get_logger(),
+                    "EtherCAT bus lost: wkc=%d expected=%d for >%.1f s — "
+                    "exiting for supervised restart.",
+                    cur_stats.last_wkc, expected_wkc, BUS_LOSS_GRACE_S);
+                node->publishBridgeState("bus_lost");
+                exit_code = EXIT_BUS_LOST;
+                g_shutdown.store(true);
+            }
+        } else {
+            bus_bad_since.reset();
+        }
+
         // Publish telemetry at pub_hz rate.
         if (now >= next_pub) { try {
             DriveGains cmd_main_gains;
@@ -987,9 +1085,13 @@ int main(int argc, char** argv) {
         auto log_state = [&](const std::string& name) {
             auto it = s.by_slave.find(name);
             if (it == s.by_slave.end() || !it->second.has_value()) return;
-            const auto& ds = std::any_cast<const DriveStatus&>(it->second);
-            RCLCPP_INFO(node->get_logger(), "[shutdown] %s was in %s — stopping loop",
-                name.c_str(), cia402Name(ds.cia402_state));
+            try {
+                const auto& ds = std::any_cast<const DriveStatus&>(it->second);
+                RCLCPP_INFO(node->get_logger(), "[shutdown] %s was in %s — stopping loop",
+                    name.c_str(), cia402Name(ds.cia402_state));
+            } catch (const std::bad_any_cast&) {
+                // Stale/partial status during bus loss — nothing to log.
+            }
         };
         log_state(drive_slave);
         if (dut_present) log_state(dut_slave);
@@ -1005,5 +1107,5 @@ int main(int argc, char** argv) {
     executor->cancel();
     ros_thread.join();
     rclcpp::shutdown();
-    return 0;
+    return exit_code;
 }

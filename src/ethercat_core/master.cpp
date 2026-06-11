@@ -123,7 +123,12 @@ static float readSdoFloat(int soem_idx, const SdoReadSpec& spec) {
 
 EthercatMaster::EthercatMaster(MasterConfig config, EthercatMaster::AdapterFactory factory)
     : config_(std::move(config)), factory_(std::move(factory))
-{}
+{
+    original_positions_.reserve(config_.slaves.size());
+    for (const auto& sc : config_.slaves) {
+        original_positions_.push_back(sc.position);
+    }
+}
 
 EthercatMaster::~EthercatMaster() {
     if (initialized_) {
@@ -132,15 +137,27 @@ EthercatMaster::~EthercatMaster() {
 }
 
 MasterRuntime& EthercatMaster::initialize() {
+    // Reset state left over from a previous (possibly failed) attempt so this
+    // method can be retried: adapters may have been built before the failing
+    // slave, and resolvePosition() writes discovered positions back into
+    // config_.slaves which must not be trusted on the next scan.
+    runtime_.adapters.clear();
+    runtime_.slave_index.clear();
+    runtime_.startup_params.clear();
+    for (std::size_t i = 0; i < config_.slaves.size(); ++i) {
+        config_.slaves[i].position = original_positions_[i];
+    }
+
     if (ec_init(config_.iface.c_str()) <= 0) {
         throw MasterConfigError("ec_init failed on interface '" + config_.iface + "'. "
                                 "Check the NIC name and that you have CAP_NET_RAW.");
     }
 
+    try {
+
     const int slave_count = ec_config_init(FALSE);
     if (slave_count <= 0) {
-        ec_close();
-        throw MasterConfigError("No EtherCAT slaves detected on '" + config_.iface + "'.");
+        throw BusNotReadyError("No EtherCAT slaves detected on '" + config_.iface + "'.");
     }
 
     transitionToPreOp();
@@ -208,6 +225,12 @@ MasterRuntime& EthercatMaster::initialize() {
     transitionToOperational();
     initialized_ = true;
     return runtime_;
+
+    } catch (...) {
+        // Leave no open raw socket behind so a retry can ec_init again.
+        ec_close();
+        throw;
+    }
 }
 
 void EthercatMaster::close() {
@@ -259,7 +282,7 @@ void EthercatMaster::transitionToOperational() {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
-    throw MasterConfigError(formatStateError());
+    throw BusNotReadyError(formatStateError());
 }
 
 void EthercatMaster::validateIdentity(const SlaveConfig& cfg, int soem_idx) {
@@ -292,7 +315,7 @@ int EthercatMaster::resolvePosition(const SlaveConfig& cfg) {
         std::ostringstream oss;
         oss << "No slave found with alias 0x" << std::hex << cfg.alias_address
             << " for '" << cfg.name << "'.";
-        throw MasterConfigError(oss.str());
+        throw BusNotReadyError(oss.str());
     }
 
     // No alias: try the configured position first.
@@ -314,7 +337,7 @@ int EthercatMaster::resolvePosition(const SlaveConfig& cfg) {
     std::ostringstream oss;
     oss << std::hex << "No slave matched '" << cfg.name << "' "
         << "(vendor=0x" << cfg.vendor_id << ", product=0x" << cfg.product_code << ").";
-    throw MasterConfigError(oss.str());
+    throw BusNotReadyError(oss.str());
 }
 
 void EthercatMaster::configurePdoMapping(const SlaveConfig& cfg, int soem_idx) {
@@ -339,7 +362,7 @@ void EthercatMaster::configurePdoMapping(const SlaveConfig& cfg, int soem_idx) {
             std::ostringstream oss;
             oss << std::hex << "PDO mapping SDO write failed for '" << cfg.name
                 << "' at 0x" << pm.index << ":" << static_cast<int>(pm.subindex);
-            throw MasterConfigError(oss.str());
+            throw BusNotReadyError(oss.str());
         }
     }
 }
@@ -390,7 +413,7 @@ void EthercatMaster::readStartupParams(
             << "Slave '" << cfg.name << "' not in PRE_OP before startup SDO reads: "
             << "state=0x" << (ec_slave[soem_idx].state & 0xFF)
             << " al_status=0x" << static_cast<int>(ec_slave[soem_idx].ALstatuscode);
-        throw MasterConfigError(oss.str());
+        throw BusNotReadyError(oss.str());
     }
 
     auto& params = runtime_.startup_params[cfg.name];
@@ -413,7 +436,7 @@ void EthercatMaster::readStartupParams(
                 << "Startup SDO read failed for '" << cfg.name << "' key='" << key << "'"
                 << " (state=0x" << (ec_slave[soem_idx].state & 0xFF)
                 << " al_status=0x" << static_cast<int>(ec_slave[soem_idx].ALstatuscode) << ").";
-            throw MasterConfigError(oss.str());
+            throw BusNotReadyError(oss.str());
         }
         params[key] = val;
     }

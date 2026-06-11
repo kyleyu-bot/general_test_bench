@@ -16,6 +16,13 @@ class MasterConfigError : public std::runtime_error {
     using std::runtime_error::runtime_error;
 };
 
+// Transient init failure: the bus or its slaves are absent / still booting
+// (e.g. after a drive power cycle).  The caller may retry initialize().
+// Derives from MasterConfigError so existing catch sites treat it the same.
+class BusNotReadyError : public MasterConfigError {
+    using MasterConfigError::MasterConfigError;
+};
+
 // PDO mapping write to apply at startup (before config_map).
 struct PdoMappingEntry {
     uint16_t index;
@@ -84,6 +91,8 @@ public:
 
     // Open the NIC, scan for slaves, configure PDOs, and transition to OP.
     // Returns a reference to the runtime state valid until close() is called.
+    // May be called again after it throws: each attempt fully resets SOEM and
+    // runtime state, so callers can retry on BusNotReadyError.
     MasterRuntime& initialize();
 
     // Gracefully transition slaves back to INIT and close the socket.
@@ -107,6 +116,11 @@ private:
     AdapterFactory factory_;
     MasterRuntime  runtime_;
     bool           initialized_ = false;
+
+    // Positions as loaded from the topology file.  resolvePosition() writes
+    // discovered positions back into config_.slaves; restored at the start of
+    // each initialize() attempt so a failed attempt cannot poison a retry.
+    std::vector<int> original_positions_;
 };
 
 // Human-readable AL state label (e.g., "PRE-OP", "OP", "SAFE-OP+ERR").

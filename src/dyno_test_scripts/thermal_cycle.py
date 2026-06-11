@@ -55,8 +55,8 @@ def run(params: dict, commander, stop_event):
         commander.set_command(
             numeric     = {
                 "main_velocity":    0.0,
-                "main_torque_max":  torque_max,
-                "main_torque_min":  torque_min,
+                "main_trq_loop_max_amps":  torque_max,
+                "main_trq_loop_min_amps":  torque_min,
                 "dut_velocity":     dut_vel,
             },
             main_enable = True,
@@ -83,8 +83,8 @@ def run(params: dict, commander, stop_event):
     commander.set_command(
         numeric     = {
             "main_velocity":   0.0,
-            "main_torque_max": torque_max,
-            "main_torque_min": torque_min,
+            "main_trq_loop_max_amps": torque_max,
+            "main_trq_loop_min_amps": torque_min,
             "dut_velocity":    0.0,
         },
         main_enable = False,

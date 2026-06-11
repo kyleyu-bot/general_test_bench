@@ -272,14 +272,24 @@ class PlotCell(pg.PlotWidget):
     def __init__(self, store: DataStore, parent=None):
         super().__init__(parent, background="#1a1a2e")
         self._store      = store
-        self._curves:    list[dict] = []   # {topic, field, item}
+        self._curves:    list[dict] = []   # {topic, field, item, label}
         self._color_idx: int        = 0
 
         self.setAcceptDrops(True)
-        self.addLegend(offset=(5, 5))
+        self._legend = self.addLegend(offset=(5, 5))
         self.showGrid(x=True, y=True, alpha=0.25)
         self.setLabel("bottom", "time (s)")
         self.setMinimumSize(200, 150)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        # Oscilloscope-style cursor — hidden until the stream is paused.
+        self._cursor = pg.InfiniteLine(
+            angle=90, movable=True,
+            pen=pg.mkPen("#f1c40f", width=1, style=Qt.DashLine),
+            hoverPen=pg.mkPen("#f1c40f", width=2),
+        )
+        self.addItem(self._cursor, ignoreBounds=True)
+        self._cursor.hide()
 
     # ── drag / drop ────────────────────────────────────────────────────────────
 
@@ -312,7 +322,8 @@ class PlotCell(pg.PlotWidget):
         self._color_idx += 1
         label  = f"{topic.split('/')[-1]}.{field}"
         item   = self.plot(name=label, pen=pg.mkPen(color, width=1.5))
-        self._curves.append({"topic": topic, "field": field, "item": item})
+        self._curves.append(
+            {"topic": topic, "field": field, "item": item, "label": label})
 
     def _remove_curve(self, idx: int) -> None:
         c = self._curves.pop(idx)
@@ -340,6 +351,43 @@ class PlotCell(pg.PlotWidget):
                 vs = vs[::step]
             c["item"].setData(ts, vs)
 
+    # ── cursor (paused snapshot inspection) ──────────────────────────────────────
+
+    def cursor_line(self) -> "pg.InfiniteLine":
+        return self._cursor
+
+    def set_cursor_visible(self, visible: bool) -> None:
+        self._cursor.setVisible(visible)
+
+    def cursor_pos(self) -> float:
+        return float(self._cursor.value())
+
+    def set_cursor_pos(self, x: float) -> None:
+        # Block the position signal so syncing across cells doesn't recurse.
+        self._cursor.blockSignals(True)
+        self._cursor.setPos(x)
+        self._cursor.blockSignals(False)
+
+    def update_legend_values(self, x) -> None:
+        """Augment legend labels with each curve's value at cursor time x.
+        Pass x=None to restore the plain labels."""
+        for c in self._curves:
+            if x is None:
+                self._set_legend_text(c["item"], c["label"])
+                continue
+            xs, ys = c["item"].getData()
+            if xs is None or len(xs) == 0:
+                self._set_legend_text(c["item"], f"{c['label']} = —")
+                continue
+            idx = int(np.argmin(np.abs(np.asarray(xs) - x)))
+            self._set_legend_text(c["item"], f"{c['label']} = {ys[idx]:.6g}")
+
+    def _set_legend_text(self, item, text: str) -> None:
+        for sample, label in self._legend.items:
+            if sample.item is item:
+                label.setText(text)
+                return
+
     # ── context menu ───────────────────────────────────────────────────────────
 
     def contextMenuEvent(self, ev):
@@ -362,31 +410,61 @@ class PlotCell(pg.PlotWidget):
 class PlotGrid(QWidget):
     """Resizable grid of PlotCell widgets."""
 
+    # Upper bound on rows/cols (matches the Rows/Cols spinbox range) — used to
+    # clear leftover stretch factors when the grid shrinks.
+    _MAX_DIM = 6
+
     def __init__(self, store: DataStore, rows: int = 2, cols: int = 2, parent=None):
         super().__init__(parent)
-        self._store  = store
-        self._rows   = rows
-        self._cols   = cols
+        self._store   = store
+        self._rows    = rows
+        self._cols    = cols
         self._cells: list[list[PlotCell]] = []
+        self._paused  = False
+        # Set by the window to receive the cursor time on every move.
+        self._on_cursor_time = None
 
         self._layout = QGridLayout(self)
         self._layout.setSpacing(4)
         self._rebuild()
 
-    def _rebuild(self) -> None:
-        for row in self._cells:
-            for cell in row:
-                self._layout.removeWidget(cell)
-                cell.deleteLater()
-        self._cells = []
+    def _make_cell(self) -> PlotCell:
+        cell = PlotCell(self._store, self)
+        cell.cursor_line().sigPositionChanged.connect(
+            lambda _line, c=cell: self._handle_cursor_moved(c))
+        cell.set_cursor_visible(self._paused)
+        return cell
 
+    def _rebuild(self) -> None:
+        """Re-lay cells into a rows×cols grid, reusing existing cells (and their
+        curves) in row-major order.  Only cells that fall outside the new grid
+        are destroyed; growing the grid appends fresh empty cells."""
+        flat = [cell for row in self._cells for cell in row]
+        for cell in flat:
+            self._layout.removeWidget(cell)
+
+        needed = self._rows * self._cols
+        while len(flat) > needed:          # shrink: drop trailing cells
+            flat.pop().deleteLater()
+        while len(flat) < needed:          # grow: append empty cells
+            flat.append(self._make_cell())
+
+        self._cells = []
+        i = 0
         for r in range(self._rows):
             row_cells = []
             for c in range(self._cols):
-                cell = PlotCell(self._store, self)
+                cell = flat[i]
+                i += 1
                 self._layout.addWidget(cell, r, c)
                 row_cells.append(cell)
             self._cells.append(row_cells)
+
+        # Give every active row/column an equal stretch so space divides evenly,
+        # and zero out any stretch left behind by a previously larger grid.
+        for k in range(self._MAX_DIM):
+            self._layout.setRowStretch(k,    1 if k < self._rows else 0)
+            self._layout.setColumnStretch(k, 1 if k < self._cols else 0)
 
     def set_dims(self, rows: int, cols: int) -> None:
         if rows == self._rows and cols == self._cols:
@@ -399,6 +477,36 @@ class PlotGrid(QWidget):
         for row in self._cells:
             for cell in row:
                 cell.update_curves(window_s)
+
+    # ── cursor (paused snapshot inspection) ──────────────────────────────────────
+
+    def _iter_cells(self):
+        for row in self._cells:
+            for cell in row:
+                yield cell
+
+    def set_paused(self, paused: bool) -> None:
+        self._paused = paused
+        for cell in self._iter_cells():
+            cell.set_cursor_visible(paused)
+        if paused:
+            for cell in self._iter_cells():
+                cell.set_cursor_pos(0.0)   # seed at the latest sample
+                cell.update_legend_values(0.0)
+            if self._on_cursor_time:
+                self._on_cursor_time(0.0)
+        else:
+            for cell in self._iter_cells():
+                cell.update_legend_values(None)
+
+    def _handle_cursor_moved(self, src_cell: PlotCell) -> None:
+        x = src_cell.cursor_pos()
+        for cell in self._iter_cells():
+            if cell is not src_cell:
+                cell.set_cursor_pos(x)
+            cell.update_legend_values(x)
+        if self._on_cursor_time:
+            self._on_cursor_time(x)
 
 
 # ── DisplayBox ─────────────────────────────────────────────────────────────────
@@ -579,6 +687,18 @@ class DynoPlotWindow(QMainWindow):
             ctrl_lay.addWidget(w)
             return s
 
+        self._pause_btn = QPushButton("Pause")
+        self._pause_btn.setCheckable(True)
+        self._pause_btn.setFixedWidth(80)
+        self._pause_btn.setToolTip("Freeze the stream to inspect with the cursor")
+        ctrl_lay.addWidget(self._pause_btn)
+
+        self._cursor_lbl = QLabel("Cursor: —")
+        self._cursor_lbl.setStyleSheet("color: black; font-family: monospace;")
+        ctrl_lay.addWidget(self._cursor_lbl)
+
+        ctrl_lay.addWidget(_vline())
+
         self._rows_spin    = labelled_spin("Rows:",       1,   6,  2)
         self._cols_spin    = labelled_spin("Cols:",       1,   6,  2)
 
@@ -639,6 +759,11 @@ class DynoPlotWindow(QMainWindow):
         vlay.addWidget(splitter, 1)
         self.setCentralWidget(central)
 
+        # ── Pause / cursor ─────────────────────────────────────────────────────
+        self._paused = False
+        self._grid._on_cursor_time = self._on_cursor_time
+        self._pause_btn.toggled.connect(self._on_pause_toggled)
+
         # ── Connections ────────────────────────────────────────────────────────
         self._rows_spin.valueChanged.connect(self._on_dims_changed)
         self._cols_spin.valueChanged.connect(self._on_dims_changed)
@@ -660,6 +785,16 @@ class DynoPlotWindow(QMainWindow):
         self._browser_timer.start(500)  # poll for new fields every 0.5 s
 
     # ── slots ──────────────────────────────────────────────────────────────────
+
+    def _on_pause_toggled(self, paused: bool) -> None:
+        self._paused = paused
+        self._pause_btn.setText("Resume" if paused else "Pause")
+        self._grid.set_paused(paused)
+        if not paused:
+            self._cursor_lbl.setText("Cursor: —")
+
+    def _on_cursor_time(self, x: float) -> None:
+        self._cursor_lbl.setText(f"Cursor: {x:+.3f} s")
 
     def _on_dims_changed(self) -> None:
         self._grid.set_dims(self._rows_spin.value(), self._cols_spin.value())
@@ -689,6 +824,8 @@ class DynoPlotWindow(QMainWindow):
         self._win_spin.blockSignals(False)
 
     def _update_plots(self) -> None:
+        if self._paused:
+            return   # frozen snapshot; ROS keeps buffering in the background
         window_s = float(self._win_spin.value())
         self._grid.update_all(window_s)
         self._display_panel.update(window_s)
