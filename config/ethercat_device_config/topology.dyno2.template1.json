@@ -1,5 +1,5 @@
 {
-  "iface": "enp47s0",
+  "iface": "ecat0",
   "cycle_hz": 1000,
   "strict_pdo_size": false,
   "slaves": [

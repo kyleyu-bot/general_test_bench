@@ -10,7 +10,7 @@
 # Intentionally no set -e: report ALL failing items, then exit nonzero.
 
 ### ===== CONFIG (keep in sync with rt_setup_part2.sh) =====
-NIC="enp47s0"
+NIC="ecat0"
 RT_CPU="2"
 
 rc=0

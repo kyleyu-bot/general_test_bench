@@ -19,7 +19,7 @@ extern "C" {
 #include "ethercat.h"
 }
 
-static constexpr const char* DEFAULT_IFACE = "enp47s0";
+static constexpr const char* DEFAULT_IFACE = "ecat0";
 
 static std::string sysfsRead(const std::string& iface, const char* leaf) {
     std::ifstream f("/sys/class/net/" + iface + "/" + leaf);
