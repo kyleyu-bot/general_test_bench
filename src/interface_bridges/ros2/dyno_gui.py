@@ -2607,8 +2607,29 @@ class DynoWindow(QMainWindow):
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         def _launch_as_user_ros2(script_path):
-            """Launch a Python script that requires ROS2, sourcing the ROS2 env first."""
-            bash_cmd = f'source /opt/ros/humble/setup.bash && python3 "{script_path}"'
+            """Launch a Python script that requires ROS2, sourcing the ROS2 env first.
+
+            The wrapping `sudo -u … --preserve-env=DISPLAY,XAUTHORITY` strips the
+            DDS env, so re-export the same loopback-only FastDDS profile and ROS
+            discovery vars that run_gui.sh/run_plot.sh set — otherwise the child's
+            participant uses default transport and can't talk to the loopback-only
+            bridge (SDO requests time out, writes crawl at ~1 entry/sec)."""
+            repo_root = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "../../.."))
+            profiles = os.path.join(
+                repo_root, "src/interface_bridges/ros2/fastdds_no_shm.xml")
+            exports = (
+                f'export FASTRTPS_DEFAULT_PROFILES_FILE="{profiles}"; '
+                f'export ROS_DOMAIN_ID="{os.environ.get("ROS_DOMAIN_ID", "0")}"; '
+                f'export ROS_AUTOMATIC_DISCOVERY_RANGE='
+                f'"{os.environ.get("ROS_AUTOMATIC_DISCOVERY_RANGE", "LOCALHOST")}"; '
+                f'export ROS_LOCALHOST_ONLY='
+                f'"{os.environ.get("ROS_LOCALHOST_ONLY", "1")}"; '
+            )
+            bash_cmd = (
+                f'source /opt/ros/humble/setup.bash && {exports} '
+                f'python3 "{script_path}"'
+            )
             sudo_user = os.environ.get("SUDO_USER")
             if sudo_user:
                 cmd = ["sudo", "-u", sudo_user, "-H",

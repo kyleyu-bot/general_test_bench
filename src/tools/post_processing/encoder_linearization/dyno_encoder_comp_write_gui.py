@@ -37,6 +37,7 @@ _SIZE_BYTES  = 4        # uint32 is 4 bytes
 
 _LUT_SIZE    = 2048
 _SDO_TIMEOUT = 0.5      # seconds to wait for any single SDO ack / response
+_MAX_CONSEC_FAILS = 3   # abort after this many consecutive un-acked SDO writes
 
 # ── Repo layout helpers ───────────────────────────────────────────────────────
 _REPO_ROOT = Path(__file__).resolve().parents[4]   # …/dyno_testbench_cpp
@@ -393,6 +394,19 @@ class EncoderCompWriterApp(tk.Tk):
             daemon=True,
         ).start()
 
+    def _abort_no_ack(self) -> None:
+        """Re-enable the UI and report that the bridge isn't acking SDO writes.
+
+        Called when consecutive write_sync() calls time out — almost always a
+        DDS profile / discovery mismatch with bridge_ros2 (or the bridge is
+        down), not a slow drive."""
+        msg = ("No SDO acknowledgment from bridge_ros2 after several attempts.\n\n"
+               "Is the bridge running and on the same DDS profile "
+               "(loopback-only FastDDS)?")
+        self.after(0, lambda: messagebox.showerror("Bridge not responding", msg))
+        self.after(0, lambda: self._set_buttons(True))
+        self.after(0, lambda: self._status_var.set("Aborted — no response from bridge."))
+
     def _write_worker(self, rows: list[tuple], drive: str, side: str, scalar: float) -> None:
         try:
             sdo = _get_sdo()
@@ -426,6 +440,7 @@ class EncoderCompWriterApp(tk.Tk):
             if msg:
                 self.after(0, lambda m=msg: self._status_var.set(m))
 
+        consec_fails = 0
         for row in rows:
             lut_index = row[0]
             lut_value = row[val_col]
@@ -433,9 +448,16 @@ class EncoderCompWriterApp(tk.Tk):
             # Synchronous writes: wait for each ack before proceeding.
             # The bridge has a single pending-request slot — back-to-back
             # publishes would overwrite each other before being processed.
-            sdo.write_sync(drive, idx_obj, _SUBINDEX, _SIZE_BYTES, lut_index)
-            sdo.write_sync(drive, val_obj, _SUBINDEX, _SIZE_BYTES,
-                           _rad_to_enc_counts(lut_value * scalar))
+            ok_idx = sdo.write_sync(drive, idx_obj, _SUBINDEX, _SIZE_BYTES, lut_index)
+            ok_val = sdo.write_sync(drive, val_obj, _SUBINDEX, _SIZE_BYTES,
+                                    _rad_to_enc_counts(lut_value * scalar))
+            if ok_idx and ok_val:
+                consec_fails = 0
+            else:
+                consec_fails += 1
+                if consec_fails >= _MAX_CONSEC_FAILS:
+                    self._abort_no_ack()
+                    return
             entries_done += 1
             _update()
 
@@ -508,9 +530,17 @@ class EncoderCompWriterApp(tk.Tk):
                 self.after(0, lambda m=msg: self._status_var.set(m))
 
         entries_done = 0
+        consec_fails = 0
         for i in range(_LUT_SIZE):
-            sdo.write_sync(drive, idx_obj, _SUBINDEX, _SIZE_BYTES, i)
-            sdo.write_sync(drive, val_obj, _SUBINDEX, _SIZE_BYTES, 0)
+            ok_idx = sdo.write_sync(drive, idx_obj, _SUBINDEX, _SIZE_BYTES, i)
+            ok_val = sdo.write_sync(drive, val_obj, _SUBINDEX, _SIZE_BYTES, 0)
+            if ok_idx and ok_val:
+                consec_fails = 0
+            else:
+                consec_fails += 1
+                if consec_fails >= _MAX_CONSEC_FAILS:
+                    self._abort_no_ack()
+                    return
             entries_done += 1
             _update()
 
