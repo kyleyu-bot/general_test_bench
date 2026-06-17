@@ -1682,7 +1682,7 @@ class ScriptingPanel(QGroupBox):
             return
         import glob, datetime, re, pwd as _pwd
         repo_root  = os.path.abspath(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../.."))
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../.."))
         date_str   = datetime.date.today().strftime("%Y-%m-%d")
         safe_stem  = re.sub(r"[^a-zA-Z0-9]+", "_", script_stem).rstrip("_")
         pattern    = os.path.join(repo_root, "test_data_log", date_str,
@@ -1812,7 +1812,7 @@ class ScriptingPanel(QGroupBox):
             self._log_line(f"[Parquet] Skipped (pip install pyarrow): {exc}")
             return
         repo_root = os.path.abspath(
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../.."))
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../.."))
         log_root  = Path(repo_root) / "test_data_log"
         cutoff    = time.time() - 120   # only files closed in the last 2 minutes
         sudo_user = (os.environ.get("DYNO_ORIGINAL_USER")
@@ -2581,11 +2581,11 @@ class DynoWindow(QMainWindow):
             subprocess.Popen(cmd, start_new_session=True,
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-        repo = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
+        repo = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../.."))
 
         btn_plot = QPushButton("Live Plot")
         btn_plot.clicked.connect(lambda: _launch(
-            ["bash", os.path.join(repo, "src/interface_bridges/ros2/run_plot.sh")]))
+            ["bash", os.path.join(repo, "src/interface_bridges/ros2/dyno_interface/run_plot.sh")]))
 
         btn_encoder = QPushButton("Encoder Linearization")
         btn_encoder.clicked.connect(lambda: _launch_as_user(

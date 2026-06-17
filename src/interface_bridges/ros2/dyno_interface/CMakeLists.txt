@@ -23,7 +23,7 @@ FetchContent_MakeAvailable(quill)
 # ── ethercat_core ─────────────────────────────────────────────────────────────
 # Point at the parent repo's built artifacts.
 # Build the parent CMake project first, then colcon build this package.
-set(DYNO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../..")
+set(DYNO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../..")
 
 # SOEM — fetched by the parent CMake into its build dir.
 # Adjust DYNO_BUILD_DIR if your build folder is named differently.
@@ -51,7 +51,7 @@ add_executable(bridge_ros2
 target_include_directories(bridge_ros2 PRIVATE
     "${DYNO_ROOT}/src"
     "${DYNO_ROOT}/src/testbenches"
-    "${DYNO_ROOT}/src/interface_bridges/ros2"
+    "${DYNO_ROOT}/src/interface_bridges/ros2/dyno_interface"
     ${SOEM_INCLUDE_DIRS}
     ${JSON_INCLUDE_DIR}
 )

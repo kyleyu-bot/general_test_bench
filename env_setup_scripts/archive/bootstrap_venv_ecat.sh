@@ -59,7 +59,7 @@ Verify capabilities with:
   getcap "${VENV_DIR}/bin/python3"
 
 Then run tests without sudo, for example:
-  "${REPO_ROOT}/env_setup_scripts/run_ethercat_python.sh" src/tools/scan_pysoem.py --iface enp47s0
+  "${REPO_ROOT}/env_setup_scripts/run_ethercat_python.sh" src/tools/scan_pysoem.py --iface ecat0
 
 If you need a narrower capability set than the default, rerun the capability helper with:
   sudo "${REPO_ROOT}/env_setup_scripts/enable_ethercat_caps.sh" --caps cap_net_raw,cap_sys_nice

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pysoem
 
-DEFAULT_IFACE = "enp47s0"
+DEFAULT_IFACE = "ecat0"
 
 
 def parse_args() -> argparse.Namespace:

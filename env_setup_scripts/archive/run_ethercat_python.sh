@@ -16,7 +16,7 @@ Options:
   -h, --help   Show this help text.
 
 Examples:
-  $0 src/tools/scan_pysoem.py --iface enp47s0
+  $0 src/tools/scan_pysoem.py --iface ecat0
   $0 --sudo src/ecat_functional_tests/elm3002_pdo_check.py 2 --rt-priority 90 --cpu-affinity 0 --duration 600
 EOF
 }

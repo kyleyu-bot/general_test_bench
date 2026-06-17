@@ -1,10 +1,10 @@
 #!/bin/bash
 # Build the dyno_ros2_bridge colcon package.
-# Run from the repo root: bash src/interface_bridges/ros2/build.sh
+# Run from the repo root: bash src/interface_bridges/ros2/dyno_interface/build.sh
 
 set -e
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 cd "$REPO_ROOT"
 
 echo "==> Building parent CMake project (ethercat_core + SOEM)..."
@@ -14,7 +14,7 @@ cmake --build build -j$(nproc)
 echo "==> Building dyno_ros2_bridge with colcon..."
 source /opt/ros/humble/setup.bash
 colcon build --packages-select dyno_ros2_bridge \
-             --base-paths src/interface_bridges/ros2
+             --base-paths src/interface_bridges/ros2/dyno_interface
 
 echo ""
 echo "Done. To run:"

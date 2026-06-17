@@ -73,7 +73,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 if [[ -f /opt/ros/humble/setup.bash ]]; then
     # shellcheck source=/dev/null
     source /opt/ros/humble/setup.bash
-    export FASTRTPS_DEFAULT_PROFILES_FILE="${REPO_ROOT}/src/interface_bridges/ros2/fastdds_no_shm.xml"
+    export FASTRTPS_DEFAULT_PROFILES_FILE="${REPO_ROOT}/src/interface_bridges/ros2/dyno_interface/fastdds_no_shm.xml"
     echo "ROS2 Humble sourced. FASTRTPS_DEFAULT_PROFILES_FILE set."
     echo "Run the ROS2 bridge with: sudo -E ./build/dyno_ros2_bridge/bridge_ros2"
 else
