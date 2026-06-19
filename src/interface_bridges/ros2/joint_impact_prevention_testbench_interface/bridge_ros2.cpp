@@ -655,8 +655,18 @@ int main(int argc, char** argv) {
             cmd_gains.position_loop_kd       = cmd.main_pos_kd;
             cmd_gains.max_current_a          = cmd.main_max_current_a;
 
-            const std::string main_json = JointImpactPreventionTestbench::makeDriveJson(
+            std::string main_json = JointImpactPreventionTestbench::makeDriveJson(
                 drive_slave, drive_soem_idx, cur_status, main_out_enc_bits, cmd_gains);
+
+            // Inject RT algorithm outputs and SDO abs limit so the GUI can
+            // display the actual clamped torque and set an accurate slider range.
+            try {
+                auto jj = json::parse(main_json);
+                jj["rt_torque_max"]  = static_cast<double>(testbench.rt_torque_max_out_.load(std::memory_order_relaxed));
+                jj["rt_torque_min"]  = static_cast<double>(testbench.rt_torque_min_out_.load(std::memory_order_relaxed));
+                jj["torque_abs_max"] = static_cast<double>(testbench.sdo_torque_abs_max_);
+                main_json = jj.dump();
+            } catch (...) {}
 
             node->publishTelemetry(
                 cur_stats.cycle_count,

@@ -234,6 +234,13 @@ GAIN_FIELDS = {
     "dut_pos_kp",     "dut_pos_ki",      "dut_pos_kd",
 }
 
+# Torque clamp fields are algorithm-driven; use scale=1 float mode so the
+# display shows physical Nm directly rather than a 1e6-scaled slider position.
+TORQUE_CLAMP_FIELDS = {
+    "main_torque_max", "main_torque_min",
+    "dut_torque_max",  "dut_torque_min",
+}
+
 # DS402 modes of operation: (display label, int value sent in JSON)
 DS402_MODES = [
     ("Current (-2)",                -2),
@@ -438,6 +445,7 @@ class DynoCommander(Node):
             "max_velocity_abs": 0.0, "min_position": 0.0, "max_position": 0.0,
             "max_current_a": 0.0,
             "torque_kp": 0.0, "torque_max": 0.0, "torque_min": 0.0,
+            "torque_abs_max": 0.0, "rt_torque_max": 0.0, "rt_torque_min": 0.0,
             "vel_kp": 0.0, "vel_ki": 0.0, "vel_kd": 0.0,
             "pos_kp": 0.0, "pos_ki": 0.0, "pos_kd": 0.0,
         }
@@ -544,9 +552,12 @@ class DynoCommander(Node):
             "max_position":     float(data.get("max_position_rad",
                                       data.get("max_position", 0))),
             "max_current_a":     float(data.get("max_current_a", 0.0)),
-            "torque_kp":  float(data.get("torque_kp",  0.0)),
-            "torque_max": float(data.get("torque_max", 0.0)),
-            "torque_min": float(data.get("torque_min", 0.0)),
+            "torque_kp":      float(data.get("torque_kp",      0.0)),
+            "torque_max":     float(data.get("torque_max",     0.0)),
+            "torque_min":     float(data.get("torque_min",     0.0)),
+            "torque_abs_max": float(data.get("torque_abs_max", 0.0)),
+            "rt_torque_max":  float(data.get("rt_torque_max",  0.0)),
+            "rt_torque_min":  float(data.get("rt_torque_min",  0.0)),
             "vel_kp":     float(data.get("vel_kp",     0.0)),
             "vel_ki":     float(data.get("vel_ki",     0.0)),
             "vel_kd":     float(data.get("vel_kd",     0.0)),
@@ -665,10 +676,15 @@ class DynoCommander(Node):
             max_torque = limits.get("torque_max", 0.0)
             if max_torque > 0.0:
                 return (-max_torque, max_torque, 0.0)
+        elif field_type == "torque_max":
+            abs_max = limits.get("torque_abs_max", 0.0) or 100.0
+            current = limits.get("rt_torque_max", 0.0)
+            return (-abs_max, abs_max, current)
         elif field_type == "torque_min":
-            current = limits.get(field_type, 0.0)
-            return (-20.0, 0.0, current)   # negative clamp — must allow negative
-        elif field_type in ("torque_kp", "torque_max",
+            abs_max = limits.get("torque_abs_max", 0.0) or 100.0
+            current = limits.get("rt_torque_min", 0.0)
+            return (-abs_max, abs_max, current)
+        elif field_type in ("torque_kp",
                             "vel_kp", "vel_ki", "vel_kd",
                             "pos_kp", "pos_ki", "pos_kd"):
             current = limits.get(field_type, 0.0)
@@ -1166,7 +1182,14 @@ class SliderSlot(QGroupBox):
             result = self._on_drop(key)
             if result is not None:
                 lo, hi, default = result
-                self._scale = 1_000_000.0 if key in GAIN_FIELDS else 1_000.0
+                # Torque clamp fields use scale=1 000 (not 1 000 000) so the
+                # label shows the value in physical units without micro-stepping.
+                if key in TORQUE_CLAMP_FIELDS:
+                    self._scale = 1_000.0
+                elif key in GAIN_FIELDS:
+                    self._scale = 1_000_000.0
+                else:
+                    self._scale = 1_000.0
                 sc = self._scale
                 self._scale_label.setText(f"×{int(sc):,}")
                 lo_s, hi_s, def_s = lo * sc, hi * sc, default * sc
@@ -1290,6 +1313,26 @@ class SliderSlot(QGroupBox):
         self._exact_spin.setMinimum(lo_i)
         self._exact_spin.setMaximum(hi_i)
         for w in (self._min_spin, self._max_spin, self._slider, self._exact_spin):
+            w.blockSignals(False)
+
+    def apply_value(self, val: float):
+        """Update the displayed value from an external source (no user signal emitted)."""
+        sc = self._scale
+        if self._float_mode:
+            self._committed_float = val * sc   # keep slot.value in sync
+            self._float_spin.blockSignals(True)
+            self._float_spin.setValue(val * sc)
+            self._float_spin.blockSignals(False)
+            self._val_label.setText(f"{val:.6f}")
+            return
+        val_i = int(val * sc)
+        val_i = max(self._slider.minimum(), min(self._slider.maximum(), val_i))
+        for w in (self._slider, self._exact_spin):
+            w.blockSignals(True)
+        self._slider.setValue(val_i)
+        self._exact_spin.setValue(val_i)
+        self._val_label.setText(f"{val_i / sc:.3f}")
+        for w in (self._slider, self._exact_spin):
             w.blockSignals(False)
 
 
@@ -1429,6 +1472,13 @@ class SpinboxSlot(QGroupBox):
     def apply_limits(self, lo: float, hi: float):
         self._spin.blockSignals(True)
         self._spin.setRange(lo, hi)
+        self._spin.blockSignals(False)
+
+    def apply_value(self, val: float):
+        """Update displayed value without triggering committed callback."""
+        self._spin.blockSignals(True)
+        self._spin.setValue(val)
+        self._committed = val
         self._spin.blockSignals(False)
 
 
@@ -1926,6 +1976,7 @@ class DynoWindow(QMainWindow):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._push_command)
         self._timer.start(5)   # 200 Hz
+        self._torque_display_tick = 0
 
         self._error_timer = QTimer(self)
         self._error_timer.timeout.connect(self._refresh_all_errors)
@@ -2237,7 +2288,8 @@ class DynoWindow(QMainWindow):
         self._inertia_spin.setRange(0.0, 100.0)
         self._inertia_spin.setDecimals(6)
         self._inertia_spin.setSingleStep(0.001)
-        self._inertia_spin.setValue(0.0)
+        self._inertia_spin.setKeyboardTracking(False)
+        self._inertia_spin.setValue(0.000135)
         self._inertia_spin.valueChanged.connect(self._cmd.set_inertia)
         inertia_lay.addWidget(self._inertia_spin)
         btn_lay.addWidget(inertia_group)
@@ -2254,7 +2306,8 @@ class DynoWindow(QMainWindow):
         self._hardstop_upper_spin.setRange(-100.0, 100.0)
         self._hardstop_upper_spin.setDecimals(4)
         self._hardstop_upper_spin.setSingleStep(0.01)
-        self._hardstop_upper_spin.setValue(0.0)
+        self._hardstop_upper_spin.setKeyboardTracking(False)
+        self._hardstop_upper_spin.setValue(3.0)
         self._hardstop_upper_spin.valueChanged.connect(self._cmd.set_hardstop_pos_upper)
         jip_lay.addWidget(self._hardstop_upper_spin)
 
@@ -2263,18 +2316,26 @@ class DynoWindow(QMainWindow):
         self._hardstop_lower_spin.setRange(-100.0, 100.0)
         self._hardstop_lower_spin.setDecimals(4)
         self._hardstop_lower_spin.setSingleStep(0.01)
-        self._hardstop_lower_spin.setValue(0.0)
+        self._hardstop_lower_spin.setKeyboardTracking(False)
+        self._hardstop_lower_spin.setValue(-3.0)
         self._hardstop_lower_spin.valueChanged.connect(self._cmd.set_hardstop_pos_lower)
         jip_lay.addWidget(self._hardstop_lower_spin)
 
         jip_lay.addWidget(QLabel("Margin (rad):"))
         self._margin_spin = QDoubleSpinBox()
-        self._margin_spin.setRange(0.0, 10.0)
+        self._margin_spin.setRange(0.0, 100.0)
         self._margin_spin.setDecimals(4)
-        self._margin_spin.setSingleStep(0.001)
-        self._margin_spin.setValue(0.0)
+        self._margin_spin.setSingleStep(0.01)
+        self._margin_spin.setKeyboardTracking(False)
+        self._margin_spin.setValue(0.1)
         self._margin_spin.valueChanged.connect(self._cmd.set_margin)
         jip_lay.addWidget(self._margin_spin)
+
+        jip_lay.addSpacing(4)
+        jip_lay.addWidget(QLabel("Torque Abs Max (SDO):"))
+        self._torque_abs_max_label = QLabel("—")
+        self._torque_abs_max_label.setStyleSheet("font-weight: bold;")
+        jip_lay.addWidget(self._torque_abs_max_label)
 
         btn_lay.addWidget(jip_group)
 
@@ -2932,14 +2993,31 @@ class DynoWindow(QMainWindow):
     def _push_command(self):
         if self._script_running:
             return
+        # Torque clamp slots are read-only displays of the algorithm's RT output.
+        # Update at 20 Hz (every 10 ticks) to avoid visual flicker — the braking
+        # algorithm may toggle these rapidly on each RT cycle.
+        self._torque_display_tick = (self._torque_display_tick + 1) % 10
+        if self._torque_display_tick == 0:
+            for _slot in self._slots + self._spin_slots:
+                if _slot.field in TORQUE_CLAMP_FIELDS:
+                    _res = self._cmd.get_limits(_slot.field)
+                    if _res is not None:
+                        _slot.apply_value(_res[2])
+            # Always show the SDO abs-max regardless of whether a slot is assigned.
+            _abs_res = self._cmd.get_limits("main_torque_max")
+            if _abs_res is not None:
+                self._torque_abs_max_label.setText(f"{_abs_res[1]:.3f}")
         # Setpoint fields default to 0; gain fields are omitted unless a slider
         # is actively assigned to them (so the bridge keeps its SDO-seeded values).
+        # TORQUE_CLAMP_FIELDS are display-only — never send them as commands or the
+        # braking algorithm's output gets fed back into CommandState, zeroing the
+        # torque limit between braking cycles and breaking the algorithm's reset path.
         numeric = {k: 0 for k in ALL_CMD_KEYS if k not in GAIN_FIELDS}
         for slot in self._slots:
-            if slot.field is not None:
+            if slot.field is not None and slot.field not in TORQUE_CLAMP_FIELDS:
                 numeric[slot.field] = slot.value
         for slot in self._spin_slots:
-            if slot.field is not None:
+            if slot.field is not None and slot.field not in TORQUE_CLAMP_FIELDS:
                 numeric[slot.field] = slot.value
         numeric["ch1_torque_scale"] = self._ch1_scale
         numeric["ch2_torque_scale"] = self._ch2_scale
@@ -3228,7 +3306,7 @@ class DynoWindow(QMainWindow):
             if slot.field and slot.field.startswith(prefix):
                 result = self._cmd.get_limits(slot.field)
                 if result is not None:
-                    lo, hi, _ = result
+                    lo, hi, current = result
                     slot.apply_limits(lo, hi)
 
     def set_status(self, text: str):

@@ -1,8 +1,6 @@
 #pragma once
 
-#include "ethercat_core/data_types.hpp"
-
-#include <string>
+#include "ethercat_core/devices/motor_drives/Novanta/Volcano/data_types.hpp"
 
 class Braking {
 public:
@@ -20,10 +18,13 @@ public:
               float hardstop_pos_upper,
               float hardstop_pos_lower,
               float margin,
-              float inertia);
+              float inertia,
+              float max_current_a,
+              float torque_abs_max,
+              float gear_ratio);
 
-    // Apply braking commands into the outgoing system command for the given slave.
-    void write(ethercat_core::SystemCommand& cmd, const std::string& slave_name);
+    // Apply braking modifications directly to the drive command for this cycle.
+    void write(ethercat_core::novanta::volcano::Command& drive_cmd);
 
 private:
     float velocity_rad_s_     = 0.f;
@@ -32,4 +33,7 @@ private:
     float hardstop_pos_lower_ = 0.f;
     float margin_             = 0.f;
     float inertia_            = 0.f;
+    float max_current_a_      = 0.f;
+    float torque_abs_max_     = 0.f;
+    float gear_ratio_         = 1.f;
 };

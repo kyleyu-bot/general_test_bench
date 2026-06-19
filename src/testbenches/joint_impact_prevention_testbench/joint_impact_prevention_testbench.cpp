@@ -52,6 +52,8 @@ DriveGains JointImpactPreventionTestbench::extractGains_(
     g.position_loop_ki       = get("position_loop_ki");
     g.position_loop_kd       = get("position_loop_kd");
     g.max_current_a          = get("max_current");
+    const float gr           = get("gear_ratio");
+    g.gear_ratio             = (gr > 0.0f) ? gr : 1.0f;
     return g;
 }
 
@@ -63,6 +65,9 @@ void JointImpactPreventionTestbench::extractAndSeedGains(
     std::mutex&    cmd_mutex)
 {
     const DriveGains gains = extractGains_(rt, drive_slave_);
+
+    sdo_torque_abs_max_ = gains.torque_loop_max_output;
+    sdo_gear_ratio_     = gains.gear_ratio;
 
     std::lock_guard<std::mutex> lk(cmd_mutex);
     cmd_state.main_torque_kp      = gains.torque_kp;
@@ -115,9 +120,6 @@ EthercatLoop::CycleCallback JointImpactPreventionTestbench::makeCallback(
         main_cmd.position_loop_ki        = cmd.main_pos_ki;
         main_cmd.position_loop_kd        = cmd.main_pos_kd;
 
-        SystemCommand sys_cmd;
-        sys_cmd.by_slave[drive_slave_] = main_cmd;
-
         // Capture per-cycle log record.
         dyno::PdoLogRecord rec;
         rec.cycle_count   = stats.cycle_count;
@@ -138,8 +140,12 @@ EthercatLoop::CycleCallback JointImpactPreventionTestbench::makeCallback(
 
             braking_.read(velocity_rad_s, position_rad,
                           cmd.hardstop_pos_upper, cmd.hardstop_pos_lower,
-                          cmd.margin, cmd.inertia);
-            braking_.write(sys_cmd, drive_slave_);
+                          cmd.margin, cmd.inertia,
+                          cmd.main_max_current_a, sdo_torque_abs_max_,
+                          sdo_gear_ratio_);
+            braking_.write(main_cmd);
+            rt_torque_max_out_.store(main_cmd.torque_loop_max_output, std::memory_order_relaxed);
+            rt_torque_min_out_.store(main_cmd.torque_loop_min_output, std::memory_order_relaxed);
 
             rec.main_tx_statusword        = ds.status_word;
             rec.main_tx_mode_display      = ds.mode_of_operation_display;
@@ -174,6 +180,10 @@ EthercatLoop::CycleCallback JointImpactPreventionTestbench::makeCallback(
         rec.main_rx_pos_ki            = main_cmd.position_loop_ki;
         rec.main_rx_pos_kd            = main_cmd.position_loop_kd;
         rec.main_rx_enable            = cmd.main_enable;
+
+        // Build sys_cmd after braking_.write() has had a chance to modify main_cmd.
+        SystemCommand sys_cmd;
+        sys_cmd.by_slave[drive_slave_] = main_cmd;
 
         rec.jip_inertia            = cmd.inertia;
         rec.jip_hardstop_pos_upper = cmd.hardstop_pos_upper;

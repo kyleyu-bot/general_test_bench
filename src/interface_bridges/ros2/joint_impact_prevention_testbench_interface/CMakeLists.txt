@@ -46,6 +46,7 @@ set(JSON_INCLUDE_DIR "${DYNO_BUILD_DIR}/_deps/nlohmann_json-src/include")
 add_executable(bridge_ros2
     bridge_ros2.cpp
     "${DYNO_ROOT}/src/testbenches/joint_impact_prevention_testbench/joint_impact_prevention_testbench.cpp"
+    "${DYNO_ROOT}/src/testbenches/joint_impact_prevention_testbench/feature_functions/joint_braking.cpp"
 )
 
 target_include_directories(bridge_ros2 PRIVATE

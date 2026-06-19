@@ -82,6 +82,7 @@ struct DriveGains {
     float position_loop_ki       = 0.0f;
     float position_loop_kd       = 0.0f;
     float max_current_a          = 0.0f;
+    float gear_ratio             = 1.0f;
 };
 
 // ── Joint-impact-prevention testbench helper ──────────────────────────────────
@@ -135,6 +136,14 @@ public:
 
     int  driveIdx()       const { return drive_soem_idx_; }
     int  mainOutEncBits() const { return main_out_enc_bits_; }
+
+    // Set once by extractAndSeedGains; read-only after that.
+    float sdo_torque_abs_max_ = 0.0f;
+    float sdo_gear_ratio_     = 1.0f;
+
+    // RT-thread outputs — written after braking_.write(), safe to read from ROS2 thread.
+    std::atomic<float> rt_torque_max_out_{0.0f};
+    std::atomic<float> rt_torque_min_out_{0.0f};
 
 private:
     DriveGains extractGains_(const ethercat_core::MasterRuntime& rt,
