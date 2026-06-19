@@ -43,7 +43,7 @@ void Braking::write(ethercat_core::novanta::volcano::Command& drive_cmd)
             braking_torque = 50;
         }
     }
-    if(abs(hardstop_pos_lower_ - position_rad_) <= (margin_ + distance_to_stop) && (velocity_rad_s_ < 10))
+    else if(abs(hardstop_pos_lower_ - position_rad_) <= (margin_ + distance_to_stop) && (velocity_rad_s_ < -10))
     {
         lower_braking = true;
         braking_torque = rotational_energy / (margin_ + distance_to_stop);
@@ -51,6 +51,11 @@ void Braking::write(ethercat_core::novanta::volcano::Command& drive_cmd)
         {
             braking_torque = 50;
         }
+    }
+    else
+    {
+        drive_cmd.torque_loop_max_output = 100.0;
+        drive_cmd.torque_loop_min_output = -100.0;
     }
 
     if(upper_braking)
