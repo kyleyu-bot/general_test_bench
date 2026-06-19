@@ -1,5 +1,6 @@
 #include "joint_braking.hpp"
 #include "math.h"
+#include <stdio.h>
 
 void Braking::read(float velocity_rad_s,
                    float position_rad,
@@ -30,12 +31,20 @@ void Braking::write(ethercat_core::novanta::volcano::Command& drive_cmd)
     static bool upper_braking = false;
     static bool lower_braking = false;
     static float braking_torque = 0;
-
+    if(torque_abs_max_ < 1e-6f){
+        torque_abs_max_ = 100;
+    }
     rotational_energy = 0.5 * inertia_ * pow(velocity_rad_s_,2);
     distance_to_stop = rotational_energy / 2 / torque_abs_max_ / pow(gear_ratio_, 2);
 
     if(abs(hardstop_pos_upper_ - position_rad_) <= (margin_ + distance_to_stop) && (velocity_rad_s_ > 10))    
     {
+        // printf("entered upper braking, hard stop = %f\n", hardstop_pos_upper_);
+        // printf("entered upper braking, position = %f\n", position_rad_);
+        // printf("entered upper braking, margin = %f\n", margin_);
+        // printf("entered upper braking, distance_to_stop = %f\n", distance_to_stop);
+        // printf("entered upper braking, braking_torque = %f\n", braking_torque);
+        // printf("entered upper braking, torque_abs_max_ = %f\n", torque_abs_max_);
         upper_braking = true;
         braking_torque = rotational_energy / (margin_ + distance_to_stop);
         if(braking_torque >= 100)
